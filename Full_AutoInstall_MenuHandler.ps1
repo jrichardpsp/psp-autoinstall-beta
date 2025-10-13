@@ -768,7 +768,9 @@ function Install-PSP{
   param (
     [string]$PSPUrl,
     [string]$tempDir,
-    [string]$FrontendHost
+    [string]$FrontendHost,
+    [int]$httpPort = 5000,
+    [int]$httpsPort = 5001
   )
 
   # -----------------------------------
@@ -799,8 +801,8 @@ function Install-PSP{
   $Arguments = @(
     "/i", $Installer,
     "USE_LOCAL_SYSTEM=1",
-    "PSP_HTTP_PORT=5000",
-    "PSP_HTTPS_PORT=5001",
+    "PSP_HTTP_PORT=$httpPort",
+    "PSP_HTTPS_PORT=$httpsPort",
     "PSP_BIND_ALL=1",
     "PSP_SQL_SERVER=localhost",
     "PSP_SQL_PORT=1433",
@@ -1081,6 +1083,95 @@ function Install-WebConfig {
     # Write forbidden.html
     $ForbiddenPage | Out-File -FilePath $ForbiddenTarget -Encoding UTF8 -Force
     Write-Host "Forbidden page template written to $ForbiddenTarget..." -ForegroundColor Green
+}
+function Harden-TlsConfiguration {
+    <#
+    .SYNOPSIS
+        Hardens the server by disabling legacy SSL/TLS protocols and weak ciphers.
+
+    .DESCRIPTION
+        - Disables SSL 2.0, SSL 3.0, TLS 1.0, and TLS 1.1
+        - Keeps TLS 1.2 (and TLS 1.3, if supported)
+        - Disables weak ciphers (RC4, DES, 3DES, EXPORT, NULL, MD5)
+        - Creates required SCHANNEL registry keys if missing
+        - Backs up the current SCHANNEL configuration to C:\Temp\SchannelBackup.reg
+
+    .EXAMPLE
+        Harden-TlsConfiguration
+    #>
+
+    [CmdletBinding()]
+    param()
+
+    Write-Host "Starting TLS/SSL hardening..." -ForegroundColor Cyan
+
+    $backupPath = "C:\Temp\SchannelBackup.reg"
+    if (-not (Test-Path "C:\Temp")) { New-Item -Path "C:\Temp" -ItemType Directory | Out-Null }
+
+    try {
+        Write-Host "Backing up current SCHANNEL configuration to $backupPath"
+        reg export "HKLM\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL" $backupPath /y | Out-Null
+    }
+    catch {
+        Write-Warning "Failed to back up SCHANNEL registry branch. Continuing anyway."
+    }
+
+    # Define protocols to disable
+    $Protocols = @(
+        "SSL 2.0",
+        "SSL 3.0",
+        "TLS 1.0",
+        "TLS 1.1"
+    )
+
+    foreach ($proto in $Protocols) {
+        $basePath = "HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\$proto"
+        $clientKey = Join-Path $basePath "Client"
+        $serverKey = Join-Path $basePath "Server"
+
+        foreach ($key in @($clientKey, $serverKey)) {
+            if (-not (Test-Path $key)) {
+                New-Item -Path $key -Force | Out-Null
+            }
+            New-ItemProperty -Path $key -Name "Enabled" -PropertyType DWord -Value 0 -Force | Out-Null
+            New-ItemProperty -Path $key -Name "DisabledByDefault" -PropertyType DWord -Value 1 -Force | Out-Null
+        }
+
+        Write-Host "Disabled $proto protocol" -ForegroundColor Yellow
+    }
+
+    # Enable TLS 1.2
+    $tls12Paths = @(
+        "HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.2\Client",
+        "HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.2\Server"
+    )
+
+    foreach ($path in $tls12Paths) {
+        if (-not (Test-Path $path)) { New-Item -Path $path -Force | Out-Null }
+        New-ItemProperty -Path $path -Name "Enabled" -PropertyType DWord -Value 1 -Force | Out-Null
+        New-ItemProperty -Path $path -Name "DisabledByDefault" -PropertyType DWord -Value 0 -Force | Out-Null
+    }
+
+    Write-Host "Ensured TLS 1.2 is enabled." -ForegroundColor Green
+
+    # Disable weak ciphers
+    $WeakCiphers = @(
+        "RC2 128/128", "RC2 40/128", "RC2 56/128",
+        "RC4 40/128", "RC4 56/128", "RC4 64/128", "RC4 128/128",
+        "DES 56/56", "3DES 168/168",
+        "NULL", "EXP", "MD5"
+    )
+
+    foreach ($cipher in $WeakCiphers) {
+        $cipherPath = "HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Ciphers\$cipher"
+        if (-not (Test-Path $cipherPath)) { New-Item -Path $cipherPath -Force | Out-Null }
+        New-ItemProperty -Path $cipherPath -Name "Enabled" -PropertyType DWord -Value 0 -Force | Out-Null
+        Write-Host "Disabled weak cipher: $cipher" -ForegroundColor Yellow
+    }
+
+    Write-Host ""
+    Write-Host "TLS/SSL hardening complete." -ForegroundColor Green
+    Write-Host "Reboot the server for changes to take effect." -ForegroundColor Cyan
 }
 
 function Initialize-IIS{
@@ -1545,15 +1636,37 @@ function Register-CertRenewalScheduledTask {
 
 # ------------------ Helper Functions ------------------
 function Get-PfxSubject {
-    param(
-        [Parameter(Mandatory)][string]$PfxPath,
-        [Parameter(Mandatory)][SecureString]$Password
+    param (
+        [string]$PfxPath,
+        [SecureString]$Password
     )
-    $cert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($PfxPath, $Password)
-    $name = $cert.GetNameInfo([System.Security.Cryptography.X509Certificates.X509NameType]::DnsName, $false)
-    if ($name -and $name -match '^[^=]+=([^,]+)') { return $matches[1].Trim() }
-    return $name
+
+    # Load certificate
+    $cert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2
+    $cert.Import($PfxPath, $Password, 'Exportable,PersistKeySet')
+
+    # Collect DNS names from SAN
+    $dnsNames = @()
+    foreach ($ext in $cert.Extensions) {
+        if ($ext.Oid.FriendlyName -eq "Subject Alternative Name") {
+            $entries = $ext.Format($false) -split ',\s*'
+            foreach ($entry in $entries) {
+                if ($entry -match '^DNS Name=') {
+                    $dnsNames += ($entry -replace '^DNS Name=','').Trim().ToLower()
+                }
+            }
+        }
+    }
+
+    # If SANs exist, return them
+    if ($dnsNames.Count -gt 0) {
+        return ,$dnsNames
+    }
+
+    # Otherwise return CN fallback
+    return ,($cert.GetNameInfo([System.Security.Cryptography.X509Certificates.X509NameType]::DnsName, $false).ToLower())
 }
+
 function Test-HostnameFormat {
     param([Parameter(Mandatory)][string]$Name)
     return $Name -match '^(?=.{1,253}$)(?!-)([A-Za-z0-9-]{1,63}(?<!-)\.)+[A-Za-z]{2,63}$'
@@ -1820,6 +1933,244 @@ function Test-IsServer2016OrNewer {
         return $false
     }
 }
+function Get-ListeningPort {
+    <#
+    .SYNOPSIS
+        Returns all listening TCP/UDP ports and their associated processes.
+        If PID 4 (System) is found, identifies which IIS site(s) use that port.
+
+    .PARAMETER Port
+        One or more port numbers to check (e.g. -Port 80,443,5001).
+
+    .PARAMETER Protocol
+        The protocol type: TCP or UDP (default: TCP).
+
+    .PARAMETER All
+        When set, lists all listening ports (IPv4 only).
+
+    .EXAMPLE
+        Get-ListeningPort -Port 80,443,5001
+    .EXAMPLE
+        Get-ListeningPort -All | Export-Csv C:\Temp\Ports.csv -NoTypeInformation
+    #>
+
+    [CmdletBinding(DefaultParameterSetName='ByPort')]
+    param(
+        [Parameter(ParameterSetName='ByPort', Mandatory=$true)]
+        [ValidateRange(1,65535)]
+        [int[]]$Port,
+
+        [Parameter(ParameterSetName='ByPort')]
+        [Parameter(ParameterSetName='AllPorts')]
+        [ValidateSet('TCP','UDP')]
+        [string]$Protocol = 'TCP',
+
+        [Parameter(ParameterSetName='AllPorts')]
+        [switch]$All
+    )
+
+    try {
+        $netstatOutput = netstat -ano | Select-String "LISTENING"
+        $listeners = $netstatOutput | Where-Object { $_ -match "^\s*$Protocol" }
+
+        if (-not $listeners) {
+            Write-Verbose "No $Protocol listeners found."
+            return @()
+        }
+
+        # Build IIS site→port map (if available)
+        $iisMap = @{}
+        try {
+            Import-Module WebAdministration -ErrorAction Stop
+            Get-Website | ForEach-Object {
+                $siteName = $_.Name
+                $_.Bindings.Collection | ForEach-Object {
+                    $bind = $_.bindingInformation
+                    if ($bind -match ":(\d+):?") {
+                        $portNum = [int]$matches[1]
+                        if (-not $iisMap.ContainsKey($portNum)) { $iisMap[$portNum] = @() }
+                        $iisMap[$portNum] += $siteName
+                    }
+                }
+            }
+        }
+        catch { }
+
+        # Determine which ports to scan
+        $targetPorts = if ($All) {
+            ($listeners | ForEach-Object {
+                if ($_ -match ":(\d+)\s") { [int]$matches[1] }
+            } | Sort-Object -Unique)
+        }
+        else { $Port }
+
+        $results = @()
+
+        foreach ($p in $targetPorts) {
+            $portMatches = $listeners | Where-Object { $_ -match "[:.]$p\s" }
+            if (-not $portMatches) {
+                $results += [PSCustomObject]@{
+                    Port      = $p
+                    Protocol  = $Protocol
+                    LocalAddr = $null
+                    State     = 'Not Listening'
+                    ProcId    = $null
+                    Process   = $null
+                    IISSite   = $null
+                }
+                continue
+            }
+
+            foreach ($line in $portMatches) {
+                $parts = $line -split '\s+' | Where-Object { $_ -ne '' }
+
+                # Skip IPv6 (anything in [brackets])
+                if ($parts[1] -match '^\[.+\]:\d+$') { continue }
+
+                $procId = $parts[-1]
+                $process = Get-Process -Id $procId -ErrorAction SilentlyContinue
+                $iisSite = if ($procId -eq 4 -and $iisMap.ContainsKey($p)) {
+                    ($iisMap[$p] -join ', ')
+                } else { $null }
+
+                $results += [PSCustomObject]@{
+                    Port      = $p
+                    Protocol  = $Protocol
+                    LocalAddr = $parts[1]
+                    State     = 'LISTENING'
+                    ProcId    = $procId
+                    Process   = if ($process) { $process.ProcessName } else { 'Unknown' }
+                    IISSite   = $iisSite
+                }
+            }
+        }
+
+        return $results
+    }
+    catch {
+        Write-Warning "Error checking port usage: $_"
+        return @()
+    }
+}
+function Get-ListeningPort {
+    <#
+    .SYNOPSIS
+        Returns all listening TCP/UDP ports and their associated processes.
+        If PID 4 (System) is found, identifies which IIS site(s) use that port.
+
+    .PARAMETER Port
+        One or more port numbers to check (e.g. -Port 80,443,5001).
+
+    .PARAMETER Protocol
+        The protocol type: TCP or UDP (default: TCP).
+
+    .PARAMETER All
+        When set, lists all listening ports (IPv4 only).
+
+    .EXAMPLE
+        Get-ListeningPort -Port 80,443,5001
+    .EXAMPLE
+        Get-ListeningPort -All | Export-Csv C:\Temp\Ports.csv -NoTypeInformation
+    #>
+
+    [CmdletBinding(DefaultParameterSetName='ByPort')]
+    param(
+        [Parameter(ParameterSetName='ByPort', Mandatory=$true)]
+        [ValidateRange(1,65535)]
+        [int[]]$Port,
+
+        [Parameter(ParameterSetName='ByPort')]
+        [Parameter(ParameterSetName='AllPorts')]
+        [ValidateSet('TCP','UDP')]
+        [string]$Protocol = 'TCP',
+
+        [Parameter(ParameterSetName='AllPorts')]
+        [switch]$All
+    )
+
+    try {
+        $netstatOutput = netstat -ano | Select-String "LISTENING"
+        $listeners = $netstatOutput | Where-Object { $_ -match "^\s*$Protocol" }
+
+        if (-not $listeners) {
+            Write-Verbose "No $Protocol listeners found."
+            return @()
+        }
+
+        # Build IIS site→port map (if available)
+        $iisMap = @{}
+        try {
+            Import-Module WebAdministration -ErrorAction Stop
+            Get-Website | ForEach-Object {
+                $siteName = $_.Name
+                $_.Bindings.Collection | ForEach-Object {
+                    $bind = $_.bindingInformation
+                    if ($bind -match ":(\d+):?") {
+                        $portNum = [int]$matches[1]
+                        if (-not $iisMap.ContainsKey($portNum)) { $iisMap[$portNum] = @() }
+                        $iisMap[$portNum] += $siteName
+                    }
+                }
+            }
+        }
+        catch { }
+
+        # Determine which ports to scan
+        $targetPorts = if ($All) {
+            ($listeners | ForEach-Object {
+                if ($_ -match ":(\d+)\s") { [int]$matches[1] }
+            } | Sort-Object -Unique)
+        }
+        else { $Port }
+
+        $results = @()
+
+        foreach ($p in $targetPorts) {
+            $portMatches = $listeners | Where-Object { $_ -match "[:.]$p\s" }
+            if (-not $portMatches) {
+                $results += [PSCustomObject]@{
+                    Port      = $p
+                    Protocol  = $Protocol
+                    LocalAddr = $null
+                    State     = 'Not Listening'
+                    ProcId    = $null
+                    Process   = $null
+                    IISSite   = $null
+                }
+                continue
+            }
+
+            foreach ($line in $portMatches) {
+                $parts = $line -split '\s+' | Where-Object { $_ -ne '' }
+
+                # Skip IPv6 (anything in [brackets])
+                if ($parts[1] -match '^\[.+\]:\d+$') { continue }
+
+                $procId = $parts[-1]
+                $process = Get-Process -Id $procId -ErrorAction SilentlyContinue
+                $iisSite = if ($procId -eq 4 -and $iisMap.ContainsKey($p)) {
+                    ($iisMap[$p] -join ', ')
+                } else { $null }
+
+                $results += [PSCustomObject]@{
+                    Port      = $p
+                    Protocol  = $Protocol
+                    LocalAddr = $parts[1]
+                    State     = 'LISTENING'
+                    ProcId    = $procId
+                    Process   = if ($process) { $process.ProcessName } else { 'Unknown' }
+                    IISSite   = $iisSite
+                }
+            }
+        }
+
+        return $results
+    }
+    catch {
+        Write-Warning "Error checking port usage: $_"
+        return @()
+    }
+}
 # ------------------ Menu & UI ------------------
 function Show-CertificateTypeMenu {
     Clear-Host 2>$null
@@ -1848,7 +2199,6 @@ function Show-CertificateTypeMenu {
             '^(2|byoc|bring.*)$' { return 'BYOC' }
             '^(3|self.*)$' { return 'SelfSigned' }
             '^(q|quit|exit)$' {
-                                Stop-Transcript
                                 throw "User cancelled the wizard."
                             }
             default { Write-Host "Invalid selection. Try again." -ForegroundColor Yellow }
@@ -1987,22 +2337,57 @@ function Run-Wizard {
             Write-Host ""
             Write-Host "Bring Your Own Certificate:" -ForegroundColor Cyan
 
-            while ($true) {
-                $rawPath = Read-Host "Please provide the full path of a PFX file (e.g. C:\Temp\companycert.pfx)"
-                $PfxPath = $rawPath.Trim('"').Trim("'")
-                $PfxPath = [System.Environment]::ExpandEnvironmentVariables($PfxPath)
-                try { $PfxPath = [System.IO.Path]::GetFullPath((Join-Path -Path (Get-Location) -ChildPath $PfxPath)) } catch {}
-                if (-not (Test-Path -Path $PfxPath -PathType Leaf)) { Write-Host "The file path does not exist. Please try again." -ForegroundColor Yellow; continue }
-                if ([System.IO.Path]::GetExtension($PfxPath) -ne ".pfx") { Write-Host "The file must have a .pfx extension. Please try again." -ForegroundColor Yellow; continue }
-                break
+            # --- Look in current directory for .pfx files ---
+            $localPfxFiles = @(Get-ChildItem -Path (Get-Location) -Filter *.pfx -File -ErrorAction SilentlyContinue)
+
+            if ($localPfxFiles.Count -gt 0) {
+                Write-Host "Found the following PFX files in the current directory:" -ForegroundColor Cyan
+                for ($i=0; $i -lt $localPfxFiles.Count; $i++) {
+                    Write-Host ("[{0}] {1}" -f ($i+1), $localPfxFiles[$i].Name)
+                }
+                while ($true) {
+                    $choice = Read-Host "Select which file to use (1-$($localPfxFiles.Count)), or press Enter to type a path"
+                    if ([string]::IsNullOrWhiteSpace($choice)) {
+                        # user wants to manually type path
+                        $PfxPath = $null
+                        break
+                    }
+                    elseif ([int]::TryParse($choice, [ref]$null) -and $choice -ge 1 -and $choice -le $localPfxFiles.Count) {
+                        $PfxPath = $localPfxFiles[$choice-1].FullName
+                        break
+                    }
+                    Write-Host "Invalid selection. Please enter a number between 1 and $($localPfxFiles.Count) or press Enter." -ForegroundColor Yellow
+                }
+            } 
+
+            # If no files found, or user pressed Enter, prompt for path
+            if (-not $PfxPath) {
+                while ($true) {
+                    $rawPath = Read-Host "Please provide the full path of a PFX file (e.g. C:\Temp\companycert.pfx)"
+                    $PfxPath = $rawPath.Trim('"').Trim("'")
+                    $PfxPath = [System.Environment]::ExpandEnvironmentVariables($PfxPath)
+                    try { $PfxPath = [System.IO.Path]::GetFullPath((Join-Path -Path (Get-Location) -ChildPath $PfxPath)) } catch {}
+                    if (-not (Test-Path -Path $PfxPath -PathType Leaf)) { Write-Host "The file path does not exist. Please try again." -ForegroundColor Yellow; continue }
+                    if ([System.IO.Path]::GetExtension($PfxPath) -ne ".pfx") { Write-Host "The file must have a .pfx extension. Please try again." -ForegroundColor Yellow; continue }
+                    break
+                }
             }
 
+            # --- Prompt for password + read cert ---
             while ($true) {
                 $PfxPass = Read-Host "Please provide the password for the provided PFX file" -AsSecureString
                 try {
-                    $CertFqdn = Get-PfxSubject -PfxPath $PfxPath -Password $PfxPass
-                    if (-not $CertFqdn) { throw "Unable to read a DNS name from the certificate." }
-                    Write-Host ("Certificate loaded. Subject DNS name: {0}" -f $CertFqdn) -ForegroundColor Green
+                    $CertFqdns = Get-PfxSubject -PfxPath $PfxPath -Password $PfxPass
+
+                    # Normalize to array
+                    if (-not ($CertFqdns -is [System.Array])) {
+                        $CertFqdns = @($CertFqdns)
+                    }
+
+                    if (-not $CertFqdns -or $CertFqdns.Count -eq 0) { throw "Unable to read any DNS names from the certificate." }
+
+                    Write-Host "Certificate loaded. Found the following DNS names:" -ForegroundColor Green
+                    $CertFqdns | ForEach-Object { Write-Host "  $_" -ForegroundColor Gray }
                     break
                 } catch {
                     Write-Host ("Failed to open PFX or read subject: {0}" -f $_.Exception.Message) -ForegroundColor Yellow
@@ -2011,9 +2396,31 @@ function Run-Wizard {
                 }
             }
 
+            # --- Detect wildcards ---
+            $WildcardFqdns = @($CertFqdns | Where-Object { $_.StartsWith('*.') })
             $ResolvedHostname = $null
-            if ($CertFqdn.StartsWith('*.')) {
-                $wildRoot = $CertFqdn.Substring(2)
+            $ChosenWildcard   = $null
+
+            if ($WildcardFqdns.Count -gt 1) {
+                Write-Host "Multiple wildcard domains detected:" -ForegroundColor Yellow
+                for ($i=0; $i -lt $WildcardFqdns.Count; $i++) {
+                    Write-Host ("[{0}] {1}" -f ($i+1), $WildcardFqdns[$i])
+                }
+                while ($true) {
+                    $choice = Read-Host "Select which wildcard root to use (1-$($WildcardFqdns.Count))"
+                    if ([int]::TryParse($choice, [ref]$null) -and $choice -ge 1 -and $choice -le $WildcardFqdns.Count) {
+                        $ChosenWildcard = $WildcardFqdns[$choice-1]
+                        break
+                    }
+                    Write-Host "Invalid choice. Please enter a number between 1 and $($WildcardFqdns.Count)." -ForegroundColor Yellow
+                }
+            } elseif ($WildcardFqdns.Count -eq 1) {
+                $ChosenWildcard = $WildcardFqdns[0]
+            }
+
+            # --- Handle wildcard resolution ---
+            if ($ChosenWildcard) {
+                $wildRoot = $ChosenWildcard.Substring(2)
                 Write-Host ("Detected wildcard certificate for: {0}" -f $wildRoot) -ForegroundColor Yellow
                 while ($true) {
                     $ResolvedHostname = Read-Host ("Enter the specific FQDN for this host (must be exactly one label under {0}, e.g. host.{0})" -f $wildRoot)
@@ -2027,25 +2434,29 @@ function Run-Wizard {
                     $oneLevel = ($hostDots -eq ($rootDots + 1))
 
                     if ($endsOk -and $oneLevel) {
-                        Write-Host ("Hostname {0} is valid for wildcard {1}" -f $ResolvedHostname, $CertFqdn) -ForegroundColor Green
+                        Write-Host ("Hostname {0} is valid for wildcard {1}" -f $ResolvedHostname, $ChosenWildcard) -ForegroundColor Green
                         break
                     } else {
-                        Write-Host ("{0} is not valid for wildcard {1}. Must add exactly one label under {2}." -f $ResolvedHostname, $CertFqdn, $wildRoot) -ForegroundColor Yellow
+                        Write-Host ("{0} is not valid for wildcard {1}. Must add exactly one label under {2}." -f $ResolvedHostname, $ChosenWildcard, $wildRoot) -ForegroundColor Yellow
                     }
                 }
             } else {
-                $ResolvedHostname = $CertFqdn
+                # No wildcard found — just pick the first SAN / CN
+                $ResolvedHostname = $CertFqdns[0]
             }
 
+            # --- Final config object ---
             $CertConfig = [PSCustomObject]@{
                 Type              = 'BYOC'
                 PfxPath           = $PfxPath
                 PfxPass           = $PfxPass
-                CertFqdn          = $CertFqdn
+                CertFqdns         = $CertFqdns
+                ChosenWildcard    = $ChosenWildcard
                 Hostname          = $ResolvedHostname
-                WildcardValidated = [bool]($CertFqdn.StartsWith('*.'))
+                WildcardValidated = [bool]$ChosenWildcard
             }
         }
+
 
 
         'SelfSigned' {
@@ -2074,38 +2485,103 @@ function Run-Wizard {
 # Initialize logging
 
 # Register exit cleanup handler
+#Start Transcription
+if (-not (Test-Path -Path (Split-Path $LogPath -Parent))) {
+        New-Item -ItemType Directory -Path (Split-Path $LogPath -Parent) -Force | Out-Null
+    }
+
+Start-Transcript -Path $LogPath -Append
+
 Register-EngineEvent PowerShell.Exiting -Action {
     try { Stop-Transcript | Out-Null } catch {}
 } | Out-Null
 
 try{
-    if (-not (Test-Path -Path (Split-Path $LogPath -Parent))) {
-        New-Item -ItemType Directory -Path (Split-Path $LogPath -Parent) -Force | Out-Null
-    }
-
-    Start-Transcript -Path $LogPath -Append
     $ErrorActionPreference = "Stop"
 
     # Test if PowerSyncPro is running, if it is we should immediately bail out.
     if (Test-PowerSyncPro) {
         Write-Warning "PowerSyncPro Service is already installed or running on this system. Aborting installation script."
-        Stop-Transcript
         exit 1
     }
 
+    # Test if machine is a server - we shouldn't run on non-server OS and versions under 2016.
     Write-Host "PowerSyncPro Service is *not* present or running - continuing installation..." -ForegroundColor Green
 
     if (-not (Test-IsServer2016OrNewer)) {
         Write-Host "This operating system is not supported. Windows Server 2016 or newer is required." -ForegroundColor Red
-        Stop-Transcript
         exit 1   # stops the script with an error code
     }
 
     Write-Host "OS check passed - continuing installation..." -ForegroundColor Green
+
+    #Test if Ports we require during the installation are in-use.  Bail out if conflicts occur.
+    # Define which ports to check
+    $checkPorts = 80,443,5000,5001
+    $noConflicts = $false
+
+    # Retrieve all listeners
+    $listeners = Get-ListeningPort -Port $checkPorts
+    $listeners = @($listeners)
+
+    # Filter to only active listeners
+    $active = @($listeners | Where-Object { $_.State -eq 'LISTENING' -and $_.LocalAddr })
+
+    if ($active.Count -eq 0) {
+        Write-Host "No conflicts detected. All required ports are available." -ForegroundColor Green
+        $noConficts = $true
+    }
+
+    # Separate groups
+    if (-not $noConflicts){
+        $reverseProxyConflicts = $active | Where-Object { $_.Port -in 80,443 }
+    $kestrelConflicts      = $active | Where-Object { $_.Port -in 5000,5001 }
+
+    $conflictDetected = $false
+
+    # IIS / Reverse Proxy check
+    if ($reverseProxyConflicts) {
+        Write-Host ""
+        Write-Host "[WARNING] Reverse Proxy (IIS) Port Conflicts Detected" -ForegroundColor Yellow
+        foreach ($c in $reverseProxyConflicts) {
+            if ($c.IISSite) {
+                Write-Host (" Port {0} in use by IIS site '{1}' (Process: {2})" -f $c.Port, $c.IISSite, $c.Process) -ForegroundColor Yellow
+            } else {
+                Write-Host (" Port {0} in use by process '{1}' (PID {2})" -f $c.Port, $c.Process, $c.ProcId) -ForegroundColor Yellow
+            }
+        }
+
+        Write-Host ""
+        Write-Host "Port 80 or 443 are used by IIS or another process." -ForegroundColor Yellow
+        Write-Host "If you continue, current IIS configuration may be modified or overwritten." -ForegroundColor Yellow
+        Write-Host "If you have a default IIS configuration on this system, you can safely ignore this warning." -ForegroundColor Yellow
+        Write-Host "If you are using IIS on this system for another purpose, you should *NOT* continue." -ForegroundColor Yellow
+
+        $response = Read-Host "Do you want to continue setup anyway? (Y/N)"
+        if ($response -notmatch '^[Yy]$') {
+            Write-Host ""
+            Write-Host "Setup aborted by user to prevent overwriting IIS configuration." -ForegroundColor Red
+            exit 1
+        }
+    }
+
+    # Kestrel backend port conflicts
+    if ($kestrelConflicts) {
+        Write-Host ""
+        Write-Host "[ERROR] PowerSyncPro Backend Port Conflicts Detected" -ForegroundColor Red
+        foreach ($c in $kestrelConflicts) {
+            Write-Host (" Port {0} in use by process '{1}' (PID {2})" -f $c.Port, $c.Process, $c.ProcId) -ForegroundColor Red
+        }
+        Write-Host ""
+        Write-Host "PowerSyncPro will not be able to bind to these ports. Please review the processes using them and reconfigure them if possible." -ForegroundColor Red
+        exit 1
+    }
+
+    Write-Host "Port check complete. No blocking conflicts detected. Continuing setup..." -ForegroundColor Green
+    }
+    
     Start-Sleep -Seconds 3
-
-    # Test if machine is a server - we shouldn't run on non-server OS and versions under 2016.
-
+    
     # Start Menu Loop
     # ------------------ Main Loop ------------------
     try {
@@ -2204,6 +2680,8 @@ try{
     Write-Host "Opening Port 443 on Firewall for IIS..."
     Add-FirewallRuleForPort -Port 443
 
+    # Harden TLS / SSL - Disable Insecure Ciphers
+    Harden-TlsConfiguration
 
     # Install certificate depending on type chosen at beginning if script.
     switch ($CertType) {
@@ -2293,14 +2771,15 @@ try{
 
     Write-Host "`n"
     Write-Host "------------------------------------------------------------------------------------------------------------" -ForegroundColor Green
-
-    #if ($certInstalled) {
-    #    Write-Host "Installation Complete and Certificate Installed..." -ForegroundColor Green
-    #}
-    #else {
-    #    Write-Host "Installation Complete but Certificate Installation Failed..." -ForegroundColor Red
-    #}
-
+    Write-Host $asciiLogo
+    Write-Host "`n"
+    if ($certInstalled) {
+        Write-Host "Installation Complete and Certificate Installed..." -ForegroundColor Green
+    }
+    else {
+        Write-Host "Installation Complete but Certificate Installation Failed..." -ForegroundColor Red
+    }
+    Write-Host "`n"
     Write-Host "Admin access to PSP via the Reverse Proxy - e.g. https://$FrontEndHost"
     Write-Host "has been restricted to localhost only."
     Write-Host "`n"
@@ -2310,6 +2789,7 @@ try{
     Write-Host "You can now access PowerSyncPro at https://$FrontEndHost/ from this system." -ForegroundColor Yellow
     Write-Host "The default password is admin / 123qwe, please change it." -ForegroundColor Yellow
     Write-Host "`n"
+    Write-Host "We recommend you reboot your server before using PowerSyncPro" -ForegroundColor Yellow
     Write-Host "If you need additional support or assistance, please open a ticket at https://tickets.powersyncpro.com/."
     Write-Host "`n"
     Write-Host "Congrats!" -ForegroundColor Green
