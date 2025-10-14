@@ -2885,11 +2885,9 @@ try{
     }
 
     # Complete.
-
     Write-Host "`n"
     Write-Host "------------------------------------------------------------------------------------------------------------" -ForegroundColor Green
     Write-Host $asciiLogo
-    Write-Host "`n"
     if ($certInstalled) {
         Write-Host "Installation Complete and Certificate Installed..." -ForegroundColor Green
     }
@@ -2902,24 +2900,27 @@ try{
     switch($CertType){
         'LetsEncrypt' {
             Write-Host "LetsEncrypt certificates must be renewed every 90 days." -ForegroundColor Cyan
-            Write-Host "A scheduled task has been installed to run C:\Scripts\Cert-Puller_PoshACME.ps1 every week to check the status of the certificate."
+            Write-Host "A scheduled task has been installed to run C:\Scripts\Cert-Puller_PoshACME.ps1 every week to check the status of the"
+            Write-Host "certificate and renew it if necessary."
             Write-Host "You must leave Port 80 on this server exposed to the Internet for sucessful certificate renewals."
         }
         'BYOC' {
-            Write-Host "Your BYOC PFX has been installed." -ForegroundColor Cyan
+            Write-Host "Your BYOC PFX Certificate has been installed." -ForegroundColor Cyan
             Write-Host "To renew your certificate, please use the renewal script at C:\Scripts\Cert-Renewer.ps1"
         }
     }
     Write-Host "`n"
     Write-Host "Admin access to PSP via the Reverse Proxy - e.g. https://$FrontEndHost has been restricted to localhost only." -ForegroundColor Cyan
     Write-Host "You can modify hosts which are allowed to access the HTTPS Reverse Proxy by running C:\Scripts\WebConfig_Editor.ps1."
-    Write-Host "This restriction does not apply to https://$FrontEndHost/Agent which is used for the PSP Migration Agent."
+    Write-Host "This restriction does not apply on https://$FrontEndHost/Agent which is used for the PSP Migration Agent."
     Write-Host "`n"
     Write-Host "You can now access PowerSyncPro at https://$FrontEndHost/ from this system." -ForegroundColor Yellow
     Write-Host "The default password is admin / 123qwe, please change it." -ForegroundColor Yellow
     Write-Host "`n"
-    Write-Host "We recommend you reboot your server before using PowerSyncPro" -ForegroundColor Yellow
-    Write-Host "If you need additional support or assistance, please open a ticket at https://tickets.powersyncpro.com/."
+    Write-Host "We recommend you reboot your server before using PowerSyncPro." -ForegroundColor Yellow
+    Write-Host "If you need additional support or assistance:"
+    Write-Host "PowerSyncPro Knowledge Base: https://kb.powersyncpro.com/"
+    Write-Host "Open a ticket at https://tickets.powersyncpro.com/."
     Write-Host "`n"
     Write-Host "Congrats!" -ForegroundColor Green
     Write-Host "------------------------------------------------------------------------------------------------------------" -ForegroundColor Green
