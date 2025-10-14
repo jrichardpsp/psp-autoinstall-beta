@@ -11,9 +11,6 @@
     Copyright (c) 2025 Declaration Software
 #>
 
-#TODO: Add SSL Hardening Tasks from KB
-#TODO: Evaluate downloading scripts from Github instead of using embedded scripts as Base64
-
 #Requires -RunAsAdministrator
 Set-StrictMode -Version Latest
 
@@ -34,6 +31,7 @@ $vcDownloadURL = "https://aka.ms/vs/17/release/vc_redist.x64.exe"
 $SQLBootstrapperUrl = "https://download.microsoft.com/download/5/1/4/5145fe04-4d30-4b85-b0d1-39533663a2f1/SQL2022-SSEI-Expr.exe"
 # SQL Suite Management Studio
 $SsmsUrl = "https://aka.ms/ssmsfullsetup"
+$ExpectedSQLServiceName = 'MSSQL$SQLEXPRESS'
 
 # IIS URL Rewrite
 $RewriteUrl = "https://download.microsoft.com/download/1/2/8/128E2E22-C1B9-44A4-BE2A-5859ED1D4592/rewrite_amd64_en-US.msi"
@@ -46,16 +44,16 @@ $PSPUrl = "https://downloads.powersyncpro.com/current/PowerSyncProInstaller.msi"
 # Target Folder for Maintenance Scripts (PoshACME Cert Puller, WebConfig Editor)
 $ScriptFolder = "C:\Scripts"
 
-# Scripts to Drop (Base64 UTF-8 Encoded)
-$CertPullerScriptName   = 'Cert-Puller_PoshACME.ps1'
-$CertPullerScriptEncoded = @"
-I1JlcXVpcmVzIC1Nb2R1bGUgUG9zaC1BQ01FDQojUmVxdWlyZXMgLU1vZHVsZSBXZWJBZG1pbmlzdHJhdGlvbg0KI1JlcXVpcmVzIC1SdW5Bc0FkbWluaXN0cmF0b3INCg0KPCMNCi5TWU5PUFNJUw0KICAgIE9idGFpbnMgb3IgcmVuZXdzIGEgTGV0J3MgRW5jcnlwdCBjZXJ0aWZpY2F0ZSB1c2luZyBQb3NoLUFDTUUgYW5kIHN0b3JlcyBpdCBpbiB0aGUgTG9jYWwgTWFjaGluZSBjZXJ0aWZpY2F0ZSBzdG9yZS4NCg0KLkRFU0NSSVBUSU9ODQogICAgVGhpcyBzY3JpcHQgcmVxdWVzdHMgb3IgcmVuZXdzIGEgTGV0J3MgRW5jcnlwdCBjZXJ0aWZpY2F0ZSB2aWEgUG9zaC1BQ01FLg0KICAgIEl0IGNoZWNrcyB0aGUgTG9jYWwgTWFjaGluZSBjZXJ0aWZpY2F0ZSBzdG9yZSBmb3IgYW4gZXhpc3RpbmcgY2VydC4gSWYgdmFsaWQgYW5kIG5vdCBuZWFyIGV4cGlyeSwNCiAgICBpdCBza2lwcyByZW5ld2FsLiBPdGhlcndpc2UsIGl0IHJlcXVlc3RzIGEgbmV3IG9uZSwgaW1wb3J0cyBpdCwgYW5kIGRlbGV0ZXMgYWxsIG9sZCBvbmVzLg0KDQouUEFSQU1FVEVSIERvbWFpbg0KICAgIFRoZSBkb21haW4gZm9yIHdoaWNoIHRvIHJlcXVlc3Qgb3IgcmVuZXcgdGhlIGNlcnRpZmljYXRlIChlLmcuLCBjZXJ0LXRlc3Qucm9ja2xpZ2h0bmV0d29ya3MuY29tKS4NCg0KLlBBUkFNRVRFUiBDb250YWN0RW1haWwNCiAgICBUaGUgZW1haWwgYWRkcmVzcyBmb3IgTGV0J3MgRW5jcnlwdCBhY2NvdW50IHJlZ2lzdHJhdGlvbi4NCg0KLlBBUkFNRVRFUiBEYXlzQmVmb3JlRXhwaXJ5DQogICAgRGF5cyBiZWZvcmUgY2VydGlmaWNhdGUgZXhwaXJ5IHRvIHRyaWdnZXIgcmVuZXdhbCAoZGVmYXVsdDogMzApLg0KDQouUEFSQU1FVEVSIFN0b3JlTG9jYXRpb24NCiAgICBUaGUgY2VydGlmaWNhdGUgc3RvcmUgbG9jYXRpb24gKGRlZmF1bHQ6IENlcnQ6XExvY2FsTWFjaGluZVxNeSkuDQoNCi5QQVJBTUVURVIgV2ViUm9vdA0KICAgIFRoZSB3ZWIgc2VydmVyIHJvb3QgZm9yIEhUVFAtMDEgY2hhbGxlbmdlIGZpbGVzIChkZWZhdWx0OiBDOlxpbmV0cHViXHd3d3Jvb3QpLg0KDQouUEFSQU1FVEVSIExvZ1BhdGgNCiAgICBQYXRoIHRvIHNhdmUgbG9nIGZpbGUgKGRlZmF1bHQ6IEM6XExvZ3NcTGV0c0VuY3J5cHRSZW5ld2FsXzxkYXRlPi50eHQpLg0KDQouUEFSQU1FVEVSIEhlbHANCiAgICBTaG93cyB1c2FnZSBpbmZvcm1hdGlvbi4NCiM+DQoNCltDbWRsZXRCaW5kaW5nKCldDQpwYXJhbSAoDQogICAgW1BhcmFtZXRlcihNYW5kYXRvcnk9JGZhbHNlKV0NCiAgICBbc3RyaW5nXSREb21haW4sDQoNCiAgICBbUGFyYW1ldGVyKE1hbmRhdG9yeT0kZmFsc2UpXQ0KICAgIFtzdHJpbmddJENvbnRhY3RFbWFpbCwNCg0KICAgIFtQYXJhbWV0ZXIoTWFuZGF0b3J5PSRmYWxzZSldDQogICAgW2ludF0kRGF5c0JlZm9yZUV4cGlyeSA9IDMwLA0KDQogICAgW1BhcmFtZXRlcihNYW5kYXRvcnk9JGZhbHNlKV0NCiAgICBbc3RyaW5nXSRTdG9yZUxvY2F0aW9uID0gIkNlcnQ6XExvY2FsTWFjaGluZVxNeSIsDQoNCiAgICBbUGFyYW1ldGVyKE1hbmRhdG9yeT0kZmFsc2UpXQ0KICAgIFtzdHJpbmddJFdlYlJvb3QgPSAiQzpcaW5ldHB1Ylx3d3dyb290IiwNCg0KICAgIFtQYXJhbWV0ZXIoTWFuZGF0b3J5PSRmYWxzZSldDQogICAgW3N0cmluZ10kTG9nUGF0aCA9ICJDOlxMb2dzXExldHNFbmNyeXB0UmVuZXdhbF8kKEdldC1EYXRlIC1Gb3JtYXQgJ3l5eXlNTWRkJykudHh0IiwNCg0KICAgIFtQYXJhbWV0ZXIoTWFuZGF0b3J5PSRmYWxzZSldDQogICAgW3N3aXRjaF0kSGVscA0KKQ0KDQojIFNob3cgdXNhZ2UvaGVscCBpZiAtSGVscCwgbm8gcGFyYW1ldGVycywgT1IgcmVxdWlyZWQgdmFsdWVzIG1pc3NpbmcNCmlmICgkUFNCb3VuZFBhcmFtZXRlcnMuQ291bnQgLWVxIDAgLW9yICRIZWxwIC1vciAtbm90ICREb21haW4gLW9yIC1ub3QgJENvbnRhY3RFbWFpbCkgew0KJHVzYWdlID0gQCcNClVzYWdlOiAuXENlcnQtUHVsbGVyX1Bvc2hBQ01FLnBzMSAtRG9tYWluIDxkb21haW4+IC1Db250YWN0RW1haWwgPGVtYWlsPiBbLURheXNCZWZvcmVFeHBpcnkgPGRheXM+XSBbLVN0b3JlTG9jYXRpb24gPHN0b3JlPl0gWy1XZWJSb290IDxwYXRoPl0gWy1Mb2dQYXRoIDxwYXRoPl0gWy1IZWxwXQ0KDQpQYXJhbWV0ZXJzOg0KICAgIC1Eb21haW4gICAgICAgICAgIChSZXF1aXJlZCkgRG9tYWluIG5hbWUgdG8gcmVxdWVzdCBvciByZW5ldyBhIGNlcnRpZmljYXRlIGZvci4NCiAgICAtQ29udGFjdEVtYWlsICAgICAoUmVxdWlyZWQpIEVtYWlsIGFkZHJlc3MgZm9yIExldCdzIEVuY3J5cHQgYWNjb3VudCByZWdpc3RyYXRpb24uDQogICAgLURheXNCZWZvcmVFeHBpcnkgKE9wdGlvbmFsKSBEYXlzIGJlZm9yZSBleHBpcnkgdG8gdHJpZ2dlciByZW5ld2FsLiBEZWZhdWx0OiAzMA0KICAgIC1TdG9yZUxvY2F0aW9uICAgIChPcHRpb25hbCkgQ2VydGlmaWNhdGUgc3RvcmUgbG9jYXRpb24uIERlZmF1bHQ6IENlcnQ6XExvY2FsTWFjaGluZVxNeQ0KICAgIC1XZWJSb290ICAgICAgICAgIChPcHRpb25hbCkgUGF0aCB0byB3ZWIgc2VydmVyIHJvb3QgZm9yIEhUVFAtMDEgY2hhbGxlbmdlLiBEZWZhdWx0OiBDOlxpbmV0cHViXHd3d3Jvb3QNCiAgICAtTG9nUGF0aCAgICAgICAgICAoT3B0aW9uYWwpIFBhdGggdG8gc2F2ZSBsb2cgZmlsZS4gRGVmYXVsdDogQzpcTG9nc1xMZXRzRW5jcnlwdFJlbmV3YWxfPGRhdGU+LnR4dA0KICAgIC1IZWxwICAgICAgICAgICAgIChPcHRpb25hbCkgRGlzcGxheSB0aGlzIHVzYWdlIGluZm9ybWF0aW9uLg0KDQpFeGFtcGxlOg0KICAgIC5cQ2VydC1QdWxsZXJfUG9zaEFDTUUucHMxIC1Eb21haW4gImV4YW1wbGUuY29tIiAtQ29udGFjdEVtYWlsICJhZG1pbkBleGFtcGxlLmNvbSINCidADQogICAgV3JpdGUtT3V0cHV0ICR1c2FnZQ0KICAgIHJldHVybg0KfQ0KDQojIEluaXRpYWxpemUgbG9nZ2luZw0KaWYgKC1ub3QgKFRlc3QtUGF0aCAtUGF0aCAoU3BsaXQtUGF0aCAkTG9nUGF0aCAtUGFyZW50KSkpIHsNCiAgICBOZXctSXRlbSAtSXRlbVR5cGUgRGlyZWN0b3J5IC1QYXRoIChTcGxpdC1QYXRoICRMb2dQYXRoIC1QYXJlbnQpIC1Gb3JjZSB8IE91dC1OdWxsDQp9DQpTdGFydC1UcmFuc2NyaXB0IC1QYXRoICRMb2dQYXRoIC1BcHBlbmQNCg0KdHJ5IHsNCiAgICAjIExvZyBQb3NoLUFDTUUgdmVyc2lvbg0KICAgICRwb3NoQWNtZVZlcnNpb24gPSAoR2V0LU1vZHVsZSAtTmFtZSBQb3NoLUFDTUUgLUxpc3RBdmFpbGFibGUgfCBTb3J0LU9iamVjdCBWZXJzaW9uIC1EZXNjZW5kaW5nIHwgU2VsZWN0LU9iamVjdCAtRmlyc3QgMSkuVmVyc2lvbg0KICAgIFdyaXRlLU91dHB1dCAiUG9zaC1BQ01FIE1vZHVsZSBWZXJzaW9uOiAkcG9zaEFjbWVWZXJzaW9uIg0KDQogICAgIyBDaGVjayBpZiBjZXJ0aWZpY2F0ZSBleGlzdHMgaW4gdGhlIHN0b3JlIGFuZCBpcyB2YWxpZA0KICAgICRyZW5ld05lZWRlZCA9ICR0cnVlDQogICAgJGV4aXN0aW5nQ2VydCA9IEdldC1DaGlsZEl0ZW0gLVBhdGggJFN0b3JlTG9jYXRpb24gfCBXaGVyZS1PYmplY3Qgew0KICAgICAgICAoJF8uU3ViamVjdCAtbGlrZSAiKkNOPSREb21haW4qIiAtb3IgJF8uRG5zTmFtZUxpc3QgLWNvbnRhaW5zICREb21haW4pIC1hbmQNCiAgICAgICAgJF8uSXNzdWVyIC1saWtlICIqTGV0J3MgRW5jcnlwdCoiIC1hbmQNCiAgICAgICAgJF8uTm90QWZ0ZXIgLWd0IChHZXQtRGF0ZSkNCiAgICB9IHwgU29ydC1PYmplY3QgTm90QWZ0ZXIgLURlc2NlbmRpbmcgfCBTZWxlY3QtT2JqZWN0IC1GaXJzdCAxDQoNCiAgICBpZiAoJGV4aXN0aW5nQ2VydCkgew0KICAgICAgICAkZGF5c1VudGlsRXhwaXJ5ID0gKCRleGlzdGluZ0NlcnQuTm90QWZ0ZXIgLSAoR2V0LURhdGUpKS5EYXlzDQogICAgICAgIGlmICgkZGF5c1VudGlsRXhwaXJ5IC1ndCAkRGF5c0JlZm9yZUV4cGlyeSkgew0KICAgICAgICAgICAgV3JpdGUtT3V0cHV0ICJDZXJ0aWZpY2F0ZSBmb3IgJERvbWFpbiBpcyB2YWxpZCB1bnRpbCAkKCRleGlzdGluZ0NlcnQuTm90QWZ0ZXIpLiBObyByZW5ld2FsIG5lZWRlZC4iDQogICAgICAgICAgICAkcmVuZXdOZWVkZWQgPSAkZmFsc2UNCiAgICAgICAgfSBlbHNlIHsNCiAgICAgICAgICAgIFdyaXRlLU91dHB1dCAiQ2VydGlmaWNhdGUgZm9yICREb21haW4gZXhwaXJlcyBvbiAkKCRleGlzdGluZ0NlcnQuTm90QWZ0ZXIpLiBSZW5ld2FsIG5lZWRlZC4iDQogICAgICAgIH0NCiAgICB9IGVsc2Ugew0KICAgICAgICBXcml0ZS1PdXRwdXQgIk5vIHZhbGlkIGNlcnRpZmljYXRlIGZvdW5kIGZvciAkRG9tYWluIGluICRTdG9yZUxvY2F0aW9uLiBSZXF1ZXN0aW5nIG5ldyBjZXJ0aWZpY2F0ZS4iDQogICAgfQ0KDQogICAgaWYgKC1ub3QgJHJlbmV3TmVlZGVkKSB7DQogICAgICAgIHJldHVybg0KICAgIH0NCg0KICAgICMgQ29uZmlndXJlIFBvc2gtQUNNRSBzZXJ2ZXINCiAgICBTZXQtUEFTZXJ2ZXIgIkxFX1BST0QiDQogICAgV3JpdGUtVmVyYm9zZSAiU2V0IFBvc2gtQUNNRSBzZXJ2ZXIgdG8gcHJvZHVjdGlvbiINCg0KICAgICMgU2V0IHVwIGFjY291bnQNCiAgICAkYWNjb3VudCA9IEdldC1QQUFjY291bnQNCiAgICBpZiAoLW5vdCAkYWNjb3VudCkgew0KICAgICAgICBOZXctUEFBY2NvdW50IC1Db250YWN0ICRDb250YWN0RW1haWwgLUFjY2VwdFRPUyAtRm9yY2UNCiAgICAgICAgV3JpdGUtVmVyYm9zZSAiQ3JlYXRlZCBuZXcgUG9zaC1BQ01FIGFjY291bnQgZm9yICRDb250YWN0RW1haWwiDQogICAgfSBlbHNlIHsNCiAgICAgICAgU2V0LVBBQWNjb3VudCAtSUQgJGFjY291bnQuSUQgLUNvbnRhY3QgJENvbnRhY3RFbWFpbCAtRm9yY2UNCiAgICAgICAgV3JpdGUtVmVyYm9zZSAiVXNpbmcgZXhpc3RpbmcgUG9zaC1BQ01FIGFjY291bnQgZm9yICRDb250YWN0RW1haWwiDQogICAgfQ0KDQogICAgIyBSZXF1ZXN0IG9yIHJlbmV3IGNlcnRpZmljYXRlDQogICAgJGNlcnQgPSBOZXctUEFDZXJ0aWZpY2F0ZSAkRG9tYWluIC1QbHVnaW4gV2ViUm9vdCAtUGx1Z2luQXJncyBAeyBXUlBhdGggPSAkV2ViUm9vdCB9IC1Gb3JjZQ0KICAgIGlmICgtbm90ICRjZXJ0KSB7IHRocm93ICJGYWlsZWQgdG8gb2J0YWluL3JlbmV3IGNlcnRpZmljYXRlIGZvciAkRG9tYWluIiB9DQogICAgV3JpdGUtT3V0cHV0ICJTdWNjZXNzZnVsbHkgb2J0YWluZWQvcmVuZXdlZCBjZXJ0aWZpY2F0ZSBmb3IgJERvbWFpbiINCg0KICAgICMgR2V0IGNlcnRpZmljYXRlIGRldGFpbHMNCiAgICAkY2VydERldGFpbHMgPSBHZXQtUEFDZXJ0aWZpY2F0ZSAtTWFpbkRvbWFpbiAkRG9tYWluDQogICAgaWYgKC1ub3QgJGNlcnREZXRhaWxzKSB7IHRocm93ICJGYWlsZWQgdG8gcmV0cmlldmUgY2VydGlmaWNhdGUgZGV0YWlscyBmb3IgJERvbWFpbiIgfQ0KDQogICAgIyBJbXBvcnQgbmV3IGNlcnQNCiAgICAkaW1wb3J0ZWQgPSBJbXBvcnQtUGZ4Q2VydGlmaWNhdGUgLUZpbGVQYXRoICRjZXJ0RGV0YWlscy5QZnhGdWxsQ2hhaW4gYA0KICAgICAgICAtUGFzc3dvcmQgJGNlcnREZXRhaWxzLlBmeFBhc3MgYA0KICAgICAgICAtQ2VydFN0b3JlTG9jYXRpb24gJFN0b3JlTG9jYXRpb24gYA0KICAgICAgICAtRXhwb3J0YWJsZQ0KDQogICAgaWYgKCRpbXBvcnRlZCkgew0KICAgICAgICBXcml0ZS1PdXRwdXQgIkNlcnRpZmljYXRlIGZvciAkRG9tYWluIGltcG9ydGVkIHRvICRTdG9yZUxvY2F0aW9uIg0KICAgIH0gZWxzZSB7DQogICAgICAgIHRocm93ICJGYWlsZWQgdG8gaW1wb3J0IGNlcnRpZmljYXRlIGZvciAkRG9tYWluIGludG8gJFN0b3JlTG9jYXRpb24iDQogICAgfQ0KDQogICAgIyBDbGVhbiB1cCBvbGQgY2VydHMNCiAgICAkbmV3Q2VydCA9IEdldC1DaGlsZEl0ZW0gLVBhdGggJFN0b3JlTG9jYXRpb24gfCBXaGVyZS1PYmplY3Qgew0KICAgICAgICAoJF8uU3ViamVjdCAtbGlrZSAiKkNOPSREb21haW4qIiAtb3IgJF8uRG5zTmFtZUxpc3QgLWNvbnRhaW5zICREb21haW4pIC1hbmQNCiAgICAgICAgJF8uSXNzdWVyIC1saWtlICIqTGV0J3MgRW5jcnlwdCoiDQogICAgfSB8IFNvcnQtT2JqZWN0IE5vdEFmdGVyIC1EZXNjZW5kaW5nIHwgU2VsZWN0LU9iamVjdCAtRmlyc3QgMQ0KDQogICAgaWYgKCRuZXdDZXJ0KSB7DQogICAgICAgIEdldC1DaGlsZEl0ZW0gLVBhdGggJFN0b3JlTG9jYXRpb24gfCBXaGVyZS1PYmplY3Qgew0KICAgICAgICAgICAgKCRfLlN1YmplY3QgLWxpa2UgIipDTj0kRG9tYWluKiIgLW9yICRfLkRuc05hbWVMaXN0IC1jb250YWlucyAkRG9tYWluKSAtYW5kDQogICAgICAgICAgICAkXy5Jc3N1ZXIgLWxpa2UgIipMZXQncyBFbmNyeXB0KiIgLWFuZA0KICAgICAgICAgICAgJF8uVGh1bWJwcmludCAtbmUgJG5ld0NlcnQuVGh1bWJwcmludA0KICAgICAgICB9IHwgRm9yRWFjaC1PYmplY3Qgew0KICAgICAgICAgICAgV3JpdGUtT3V0cHV0ICJSZW1vdmluZyBvbGQgY2VydGlmaWNhdGUgKFRodW1icHJpbnQ9JCgkXy5UaHVtYnByaW50KSwgRXhwaXJlcz0kKCRfLk5vdEFmdGVyKSkiDQogICAgICAgICAgICBSZW1vdmUtSXRlbSAtUGF0aCAiJFN0b3JlTG9jYXRpb25cJCgkXy5UaHVtYnByaW50KSIgLUZvcmNlDQogICAgICAgIH0NCiAgICB9DQoNCiAgICBXcml0ZS1PdXRwdXQgIkNlcnRpZmljYXRlIGZvciAkRG9tYWluIHN1Y2Nlc3NmdWxseSBvYnRhaW5lZC9yZW5ld2VkIGFuZCBvbGQgY2VydGlmaWNhdGVzIGNsZWFuZWQgdXAuIg0KfQ0KY2F0Y2ggew0KICAgIFdyaXRlLUVycm9yICJBbiBlcnJvciBvY2N1cnJlZDogJCgkXy5FeGNlcHRpb24uTWVzc2FnZSkiDQogICAgRXhpdCAxDQp9DQpmaW5hbGx5IHsNCiAgICAjIENsZWFuIHVwIGNoYWxsZW5nZSBmaWxlcw0KICAgICRjaGFsbGVuZ2VEaXIgPSBKb2luLVBhdGggLVBhdGggJFdlYlJvb3QgLUNoaWxkUGF0aCAiLndlbGwta25vd25cYWNtZS1jaGFsbGVuZ2UiDQogICAgaWYgKFRlc3QtUGF0aCAtUGF0aCAkY2hhbGxlbmdlRGlyKSB7DQogICAgICAgIFJlbW92ZS1JdGVtIC1QYXRoICRjaGFsbGVuZ2VEaXIgLVJlY3Vyc2UgLUZvcmNlIC1FcnJvckFjdGlvbiBTaWxlbnRseUNvbnRpbnVlDQogICAgICAgIFdyaXRlLVZlcmJvc2UgIkNsZWFuZWQgdXAgY2hhbGxlbmdlIGZpbGVzIGF0ICRjaGFsbGVuZ2VEaXIiDQogICAgfQ0KfQ0KDQojIFVwZGF0ZSBwZXJtaXNzaW9ucyBmb3IgUFNQIFNlcnZpY2UgQWNjb3VudA0KV3JpdGUtT3V0cHV0ICJDaGVja2luZyBjZXJ0aWZpY2F0ZSBhbmQgYWRkaW5nIHBlcm1pc3Npb25zIHRvIFBTUCBTZXJ2aWNlIGFjY291bnQgaWYgbmVjZXNzYXJ5Li4uIg0KJHN2YyA9IEdldC1XbWlPYmplY3QgV2luMzJfU2VydmljZSAtRmlsdGVyICJOYW1lPSdQb3dlclN5bmNQcm8nIg0KaWYgKC1ub3QgJHN2Yykgew0KICAgIFdyaXRlLVdhcm5pbmcgIlNlcnZpY2UgJ1Bvd2VyU3luY1Bybycgbm90IGZvdW5kLiBTa2lwcGluZyBrZXkgcGVybWlzc2lvbiBjaGVjay4iDQp9IGVsc2Ugew0KICAgICRzdmNVc2VyID0gJHN2Yy5TdGFydE5hbWUNCiAgICBpZiAoJHN2Y1VzZXIgLWVxICJMb2NhbFN5c3RlbSIpIHsNCiAgICAgICAgV3JpdGUtT3V0cHV0ICJQb3dlclN5bmNQcm8gaXMgcnVubmluZyBhcyBMb2NhbFN5c3RlbS4gTm8gcGVybWlzc2lvbnMgdXBkYXRlIG5lZWRlZC4iDQogICAgfSBlbHNlIHsNCiAgICAgICAgdHJ5IHsNCiAgICAgICAgICAgICRudEFjY291bnQgPSBOZXctT2JqZWN0IFN5c3RlbS5TZWN1cml0eS5QcmluY2lwYWwuTlRBY2NvdW50KCRzdmNVc2VyKQ0KICAgICAgICAgICAgJHJlc29sdmVkVXNlciA9ICRudEFjY291bnQuVHJhbnNsYXRlKFtTeXN0ZW0uU2VjdXJpdHkuUHJpbmNpcGFsLk5UQWNjb3VudF0pLlZhbHVlDQogICAgICAgICAgICBXcml0ZS1PdXRwdXQgIlBvd2VyU3luY1BybyBpcyBydW5uaW5nIGFzICRyZXNvbHZlZFVzZXIuIFVwZGF0aW5nIHByaXZhdGUga2V5IEFDTC4uLiINCg0KICAgICAgICAgICAgJGtleVByb3ZJbmZvID0gJG5ld0NlcnQuUHJpdmF0ZUtleS5Dc3BLZXlDb250YWluZXJJbmZvLlVuaXF1ZUtleUNvbnRhaW5lck5hbWUNCiAgICAgICAgICAgICRtYWNoaW5lS2V5c1BhdGggPSAiJGVudjpQcm9ncmFtRGF0YVxNaWNyb3NvZnRcQ3J5cHRvXFJTQVxNYWNoaW5lS2V5cyINCiAgICAgICAgICAgICRrZXlQYXRoID0gSm9pbi1QYXRoICRtYWNoaW5lS2V5c1BhdGggJGtleVByb3ZJbmZvDQoNCiAgICAgICAgICAgIGlmIChUZXN0LVBhdGggJGtleVBhdGgpIHsNCiAgICAgICAgICAgICAgICAkYWNsID0gR2V0LUFjbCAka2V5UGF0aA0KICAgICAgICAgICAgICAgICRhY2Nlc3NSdWxlID0gTmV3LU9iamVjdCBTeXN0ZW0uU2VjdXJpdHkuQWNjZXNzQ29udHJvbC5GaWxlU3lzdGVtQWNjZXNzUnVsZSgkcmVzb2x2ZWRVc2VyLCAiRnVsbENvbnRyb2wiLCAiQWxsb3ciKQ0KICAgICAgICAgICAgICAgICRhY2wuU2V0QWNjZXNzUnVsZSgkYWNjZXNzUnVsZSkNCiAgICAgICAgICAgICAgICBTZXQtQWNsIC1QYXRoICRrZXlQYXRoIC1BY2xPYmplY3QgJGFjbA0KICAgICAgICAgICAgICAgIFdyaXRlLU91dHB1dCAiR3JhbnRlZCBGdWxsQ29udHJvbCBvbiBwcml2YXRlIGtleSB0byAkcmVzb2x2ZWRVc2VyIg0KICAgICAgICAgICAgfSBlbHNlIHsNCiAgICAgICAgICAgICAgICBXcml0ZS1XYXJuaW5nICJQcml2YXRlIGtleSBmaWxlIG5vdCBmb3VuZCBhdCAka2V5UGF0aCINCiAgICAgICAgICAgIH0NCiAgICAgICAgfSBjYXRjaCB7DQogICAgICAgICAgICBXcml0ZS1FcnJvciAiRmFpbGVkIHRvIGFkanVzdCBwcml2YXRlIGtleSBwZXJtaXNzaW9ucyBmb3IgJHN2Y1VzZXIgOiAkKCRfLkV4Y2VwdGlvbi5NZXNzYWdlKSINCiAgICAgICAgfQ0KICAgIH0NCn0NCg0KIyBVcGRhdGUgYXBwc2V0dGluZ3MuanNvbg0KJGFwcFNldHRpbmdzUGF0aCA9ICJDOlxQcm9ncmFtIEZpbGVzXFBvd2VyU3luY1Byb1xhcHBzZXR0aW5ncy5qc29uIg0KDQp0cnkgew0KICAgIGlmIChUZXN0LVBhdGggJGFwcFNldHRpbmdzUGF0aCkgew0KICAgICAgICAkanNvbiA9IEdldC1Db250ZW50ICRhcHBTZXR0aW5nc1BhdGggLVJhdyB8IENvbnZlcnRGcm9tLUpzb24NCiAgICAgICAgJGFjdHVhbFN1YmplY3QgPSAkbmV3Q2VydC5HZXROYW1lSW5mbygnU2ltcGxlTmFtZScsICRmYWxzZSkNCg0KICAgICAgICBpZiAoJGpzb24uS2VzdHJlbC5FbmRwb2ludHMuUFNPYmplY3QuUHJvcGVydGllcy5OYW1lIC1ub3Rjb250YWlucyAiSHR0cHMiKSB7DQogICAgICAgICAgICBXcml0ZS1XYXJuaW5nICJIVFRQUyBlbmRwb2ludCBub3QgZm91bmQgaW4gYXBwc2V0dGluZ3MuanNvbi4gQ3JlYXRpbmcgb25lIG9uIHBvcnQgNTAwMS4iDQoNCiAgICAgICAgICAgICRqc29uLktlc3RyZWwuRW5kcG9pbnRzIHwgQWRkLU1lbWJlciAtTWVtYmVyVHlwZSBOb3RlUHJvcGVydHkgLU5hbWUgIkh0dHBzIiAtVmFsdWUgQHsNCiAgICAgICAgICAgICAgICBVcmwgICAgICAgPSAiaHR0cHM6Ly8qOjUwMDEiDQogICAgICAgICAgICAgICAgUHJvdG9jb2xzID0gIkh0dHAxQW5kSHR0cDIiDQogICAgICAgICAgICAgICAgQ2VydGlmaWNhdGUgPSBAew0KICAgICAgICAgICAgICAgICAgICBTdWJqZWN0ICAgICAgPSAkYWN0dWFsU3ViamVjdA0KICAgICAgICAgICAgICAgICAgICBTdG9yZSAgICAgICAgPSAiTXkiDQogICAgICAgICAgICAgICAgICAgIExvY2F0aW9uICAgICA9ICJMb2NhbE1hY2hpbmUiDQogICAgICAgICAgICAgICAgICAgIEFsbG93SW52YWxpZCA9ICR0cnVlDQogICAgICAgICAgICAgICAgfQ0KICAgICAgICAgICAgfQ0KDQogICAgICAgICAgICAkanNvbiB8IENvbnZlcnRUby1Kc29uIC1EZXB0aCAxMCB8IFNldC1Db250ZW50IC1QYXRoICRhcHBTZXR0aW5nc1BhdGggLUVuY29kaW5nIFVURjgNCiAgICAgICAgICAgIFdyaXRlLU91dHB1dCAiQWRkZWQgSFRUUFMgZW5kcG9pbnQgd2l0aCBuZXcgY2VydGlmaWNhdGUgc3ViamVjdCAkYWN0dWFsU3ViamVjdC4iDQogICAgICAgIH0NCiAgICAgICAgZWxzZSB7DQogICAgICAgICAgICAkY29uZmlndXJlZFN1YmplY3QgPSAkanNvbi5LZXN0cmVsLkVuZHBvaW50cy5IdHRwcy5DZXJ0aWZpY2F0ZS5TdWJqZWN0DQoNCiAgICAgICAgICAgIGlmICgkY29uZmlndXJlZFN1YmplY3QgLW5lICRhY3R1YWxTdWJqZWN0KSB7DQogICAgICAgICAgICAgICAgV3JpdGUtV2FybmluZyAiQ29uZmlndXJlZCBjZXJ0IHN1YmplY3QgKCRjb25maWd1cmVkU3ViamVjdCkgZG9lcyBub3QgbWF0Y2ggbmV3IGNlcnQgKCRhY3R1YWxTdWJqZWN0KS4gVXBkYXRpbmcgYXV0b21hdGljYWxseS4iDQogICAgICAgICAgICAgICAgJGpzb24uS2VzdHJlbC5FbmRwb2ludHMuSHR0cHMuQ2VydGlmaWNhdGUuU3ViamVjdCA9ICRhY3R1YWxTdWJqZWN0DQogICAgICAgICAgICAgICAgJGpzb24gfCBDb252ZXJ0VG8tSnNvbiAtRGVwdGggMTAgfCBTZXQtQ29udGVudCAtUGF0aCAkYXBwU2V0dGluZ3NQYXRoIC1FbmNvZGluZyBVVEY4DQogICAgICAgICAgICAgICAgV3JpdGUtT3V0cHV0ICJVcGRhdGVkIGFwcHNldHRpbmdzLmpzb24gd2l0aCBuZXcgc3ViamVjdCAkYWN0dWFsU3ViamVjdC4iDQogICAgICAgICAgICB9IGVsc2Ugew0KICAgICAgICAgICAgICAgIFdyaXRlLU91dHB1dCAiYXBwc2V0dGluZ3MuanNvbiBhbHJlYWR5IG1hdGNoZXMgdGhlIGN1cnJlbnQgY2VydGlmaWNhdGUgc3ViamVjdC4iDQogICAgICAgICAgICB9DQogICAgICAgIH0NCiAgICB9DQogICAgZWxzZSB7DQogICAgICAgIFdyaXRlLVdhcm5pbmcgImFwcHNldHRpbmdzLmpzb24gbm90IGZvdW5kIGF0ICRhcHBTZXR0aW5nc1BhdGgiDQogICAgfQ0KfQ0KY2F0Y2ggew0KICAgIFdyaXRlLUVycm9yICJGYWlsZWQgdG8gdXBkYXRlIGFwcHNldHRpbmdzLmpzb246ICQoJF8uRXhjZXB0aW9uLk1lc3NhZ2UpIg0KfQ0KDQojIFVwZGF0ZSBJSVMgd2l0aCBuZXcgQ2VydA0KSW1wb3J0LU1vZHVsZSBXZWJBZG1pbmlzdHJhdGlvbiAtRXJyb3JBY3Rpb24gU3RvcA0KDQokc2l0ZU5hbWUgICA9ICJEZWZhdWx0IFdlYiBTaXRlIg0KJG5ld1RodW1iICAgPSAkbmV3Q2VydC5UaHVtYnByaW50DQokY2VydE9iamVjdCA9IEdldC1JdGVtICJDZXJ0OlxMb2NhbE1hY2hpbmVcTXlcJG5ld1RodW1iIg0KDQokYmluZGluZyA9IEdldC1XZWJCaW5kaW5nIC1OYW1lICRzaXRlTmFtZSAtUHJvdG9jb2wgImh0dHBzIiAtUG9ydCA0NDMgLUVycm9yQWN0aW9uIFNpbGVudGx5Q29udGludWUNCg0KaWYgKCRiaW5kaW5nKSB7DQogICAgV3JpdGUtT3V0cHV0ICJGb3VuZCBleGlzdGluZyBIVFRQUyBiaW5kaW5nIGZvciAnJHNpdGVOYW1lJy4gVXBkYXRpbmcgd2l0aCBjZXJ0ICRuZXdUaHVtYiINCg0KICAgICRzc2xCaW5kaW5ncyA9IEdldC1DaGlsZEl0ZW0gSUlTOlxTc2xCaW5kaW5ncw0KICAgIGlmICgkc3NsQmluZGluZ3MpIHsNCiAgICAgICAgJHNzbEJpbmRpbmcgPSAkc3NsQmluZGluZ3MgfCBXaGVyZS1PYmplY3QgeyAkXy5Qb3J0IC1lcSA0NDMgfSB8IFNlbGVjdC1PYmplY3QgLUZpcnN0IDENCg0KICAgICAgICBpZiAoJHNzbEJpbmRpbmcpIHsNCiAgICAgICAgICAgIFdyaXRlLU91dHB1dCAiVXBkYXRpbmcgU1NMIGJpbmRpbmcgcGF0aCAkKCRzc2xCaW5kaW5nLlBTUGF0aCkiDQogICAgICAgICAgICBTZXQtSXRlbSAtUGF0aCAkc3NsQmluZGluZy5QU1BhdGggLVZhbHVlICRjZXJ0T2JqZWN0IC1Gb3JjZQ0KICAgICAgICB9IGVsc2Ugew0KICAgICAgICAgICAgV3JpdGUtV2FybmluZyAiTm8gU1NMIGJpbmRpbmcgb2JqZWN0IGZvdW5kIGZvciBwb3J0IDQ0My4gQ3JlYXRpbmcgb25lLi4uIg0KICAgICAgICAgICAgJHNzbFBhdGggPSAiSUlTOlxTc2xCaW5kaW5nc1wwLjAuMC4wITQ0MyINCiAgICAgICAgICAgIE5ldy1JdGVtICRzc2xQYXRoIC1WYWx1ZSAkY2VydE9iamVjdCAtU1NMRmxhZ3MgMCB8IE91dC1OdWxsDQogICAgICAgIH0NCiAgICB9IGVsc2Ugew0KICAgICAgICBXcml0ZS1XYXJuaW5nICJObyBTU0wgYmluZGluZ3MgY3VycmVudGx5IGV4aXN0LiBDcmVhdGluZyBvbmUuLi4iDQogICAgICAgICRzc2xQYXRoID0gIklJUzpcU3NsQmluZGluZ3NcMC4wLjAuMCE0NDMiDQogICAgICAgIE5ldy1JdGVtICRzc2xQYXRoIC1WYWx1ZSAkY2VydE9iamVjdCAtU1NMRmxhZ3MgMCB8IE91dC1OdWxsDQogICAgfQ0KfSBlbHNlIHsNCiAgICBXcml0ZS1PdXRwdXQgIk5vIEhUVFBTIGJpbmRpbmcgZm91bmQgZm9yICckc2l0ZU5hbWUnLiBDcmVhdGluZyBuZXcgYmluZGluZyB3aXRoIGNlcnQgJG5ld1RodW1iIg0KICAgIE5ldy1XZWJCaW5kaW5nIC1OYW1lICRzaXRlTmFtZSAtUHJvdG9jb2wgaHR0cHMgLVBvcnQgNDQzIC1JUEFkZHJlc3MgKiAtSG9zdEhlYWRlciAiIg0KICAgICRzc2xQYXRoID0gIklJUzpcU3NsQmluZGluZ3NcMC4wLjAuMCE0NDMiDQogICAgTmV3LUl0ZW0gJHNzbFBhdGggLVZhbHVlICRjZXJ0T2JqZWN0IC1TU0xGbGFncyAwIHwgT3V0LU51bGwNCn0NCg0KV3JpdGUtT3V0cHV0ICJJSVMgYmluZGluZyB1cGRhdGVkIHN1Y2Nlc3NmdWxseS4iDQoNCiMgUmVzdGFydCB0aGUgc2VydmljZQ0KUmVzdGFydC1TZXJ2aWNlIC1OYW1lICJQb3dlclN5bmNQcm8iIC1Gb3JjZQ0KV3JpdGUtT3V0cHV0ICJQb3dlclN5bmNQcm8gc2VydmljZSByZXN0YXJ0ZWQuIg0KDQpTdG9wLVRyYW5zY3JpcHQNCg==
-"@
-
+# Scripts to Drop (Github Links)
+# Certificate Puller Script, used to pull certificates via LetsEncrypt / ACME
+$CertPullerScriptName = "Cert-Puller_PoshACME.ps1"
+$CertPullerURL = "https://raw.githubusercontent.com/jrichardpsp/psp-autoinstall-beta/refs/heads/main/Cert-Puller_PoshACME.ps1"
+# Certificate Renewer Script, used to manually replace a certificate on a PSP install
+$CertRenewerScriptName = "Cert-Renewer.ps1"
+$CertRenewerURL = "https://raw.githubusercontent.com/jrichardpsp/psp-autoinstall-beta/refs/heads/main/Cert-Renewer.ps1"
+# WebConfig Editor - Used to update reverse proxy allowed IPs and proxy rewrite URL.
 $WebConfigScriptName = "WebConfig_Editor.ps1"
-$WebConfigScriptEncoded = @"
-cGFyYW0oDQogICAgW3N0cmluZ10kQ29uZmlnUGF0aCA9ICJDOlxpbmV0cHViXHd3d3Jvb3Rcd2ViLmNvbmZpZyIsDQoNCiAgICBbc3RyaW5nW11dJEFkZEFsbG93ZWRBZGRyZXNzZXMsDQogICAgW3N0cmluZ1tdXSRSZW1vdmVBbGxvd2VkQWRkcmVzc2VzLA0KDQogICAgW3N0cmluZ10kU2V0RlFETiwNCiAgICBbc3dpdGNoXSRHZXRDb25maWcsDQoNCiAgICBbc3dpdGNoXSRBc0pzb24sDQogICAgW3N3aXRjaF0kRHJ5UnVuDQopDQoNCiMgTG9hZCBYTUwNClt4bWxdJHhtbCA9IEdldC1Db250ZW50ICRDb25maWdQYXRoDQokaXBTZWN1cml0eU5vZGUgPSAkeG1sLmNvbmZpZ3VyYXRpb24uJ3N5c3RlbS53ZWJTZXJ2ZXInLnNlY3VyaXR5LmlwU2VjdXJpdHkNCg0KIyAtLS0gQ0lEUiBDb252ZXJzaW9uIHdpdGggLzMyIGRlZmF1bHQgYW5kIGdyYWNlZnVsIGVycm9yIGhhbmRsaW5nIC0tLQ0KZnVuY3Rpb24gQ29udmVydC1DSURSVG9JUE1hc2sgew0KICAgIHBhcmFtKFtzdHJpbmddJENJRFIpDQoNCiAgICAjIElmIHVzZXIgZW50ZXJlZCBqdXN0IGFuIElQLCBhc3N1bWUgLzMyDQogICAgaWYgKCRDSURSIC1ub3RtYXRjaCAiLyIpIHsgJENJRFIgKz0gIi8zMiIgfQ0KDQogICAgaWYgKCRDSURSIC1ub3RtYXRjaCAiXihcZHsxLDN9KFwuXGR7MSwzfSl7M30pLyhcZHsxLDJ9KSQiKSB7DQogICAgICAgIFdyaXRlLUhvc3QgIkVycm9yOiBJbnZhbGlkIElQIG9yIENJRFIgZm9ybWF0OiAkQ0lEUiIgLUZvcmVncm91bmRDb2xvciBSZWQNCiAgICAgICAgcmV0dXJuICRudWxsDQogICAgfQ0KDQogICAgJGlwU3RyID0gJE1hdGNoZXNbMV0NCiAgICAkcHJlZml4ID0gW2ludF0kTWF0Y2hlc1szXQ0KDQogICAgIyBWYWxpZGF0ZSBJUCBvY3RldHMNCiAgICAkb2N0ZXRzID0gJGlwU3RyLlNwbGl0KCcuJykgfCBGb3JFYWNoLU9iamVjdCB7IFtpbnRdJF8gfQ0KICAgIGlmICgkb2N0ZXRzIHwgV2hlcmUtT2JqZWN0IHsgJF8gLWx0IDAgLW9yICRfIC1ndCAyNTUgfSkgew0KICAgICAgICBXcml0ZS1Ib3N0ICJFcnJvcjogSW52YWxpZCBJUCBhZGRyZXNzOiAkaXBTdHIiIC1Gb3JlZ3JvdW5kQ29sb3IgUmVkDQogICAgICAgIHJldHVybiAkbnVsbA0KICAgIH0NCg0KICAgIGlmICgkcHJlZml4IC1sdCAwIC1vciAkcHJlZml4IC1ndCAzMikgew0KICAgICAgICBXcml0ZS1Ib3N0ICJFcnJvcjogSW52YWxpZCBDSURSIHByZWZpeCBsZW5ndGg6ICRwcmVmaXgiIC1Gb3JlZ3JvdW5kQ29sb3IgUmVkDQogICAgICAgIHJldHVybiAkbnVsbA0KICAgIH0NCg0KICAgICRtYXNrQml0cyA9ICgiMSIgKiAkcHJlZml4KS5QYWRSaWdodCgzMiwgIjAiKQ0KICAgICRtYXNrQnl0ZXMgPSBAKCkNCiAgICBmb3JlYWNoICgkaSBpbiAwLi4zKSB7DQogICAgICAgICRtYXNrQnl0ZXMgKz0gW0NvbnZlcnRdOjpUb0ludDMyKCRtYXNrQml0cy5TdWJzdHJpbmcoJGkqOCw4KSwyKQ0KICAgIH0NCiAgICAkbWFzayA9IFtTeXN0ZW0uTmV0LklQQWRkcmVzc106Om5ldygkbWFza0J5dGVzKQ0KDQogICAgcmV0dXJuIEB7DQogICAgICAgIElQQWRkcmVzcyA9ICRpcFN0cg0KICAgICAgICBTdWJuZXRNYXNrID0gJG1hc2suVG9TdHJpbmcoKQ0KICAgIH0NCn0NCg0KIyBDb252ZXJ0IHN1Ym5ldCBtYXNrIGJhY2sgdG8gcHJlZml4IGxlbmd0aA0KZnVuY3Rpb24gU3VibmV0TWFza1RvUHJlZml4IHsNCiAgICBwYXJhbShbc3RyaW5nXSRTdWJuZXRNYXNrKQ0KICAgICRieXRlcyA9ICRTdWJuZXRNYXNrLlNwbGl0KCcuJykgfCBGb3JFYWNoLU9iamVjdCB7IFtDb252ZXJ0XTo6VG9TdHJpbmcoW2ludF0kXywyKS5QYWRMZWZ0KDgsJzAnKSB9DQogICAgJGJpbmFyeSA9ICgkYnl0ZXMgLWpvaW4gJycpDQogICAgcmV0dXJuICgkYmluYXJ5LlRvQ2hhckFycmF5KCkgfCBXaGVyZS1PYmplY3QgeyAkXyAtZXEgJzEnIH0pLkNvdW50DQp9DQoNCiMgLS0tIElQIE1hbmFnZW1lbnQgLS0tDQpmdW5jdGlvbiBTaG93LUFsbG93ZWRJUHMgeyAkaXBTZWN1cml0eU5vZGUuYWRkIHwgRm9yRWFjaC1PYmplY3QgeyBAeyBJUEFkZHJlc3MgPSAkXy5pcEFkZHJlc3M7IFN1Ym5ldE1hc2sgPSAkXy5zdWJuZXRNYXNrIH0gfSB9DQoNCmZ1bmN0aW9uIEFkZC1BbGxvd2VkSVAgew0KICAgIHBhcmFtKFtzdHJpbmddJENJRFIpDQogICAgJHJlc3VsdCA9IENvbnZlcnQtQ0lEUlRvSVBNYXNrICRDSURSDQogICAgaWYgKC1ub3QgJHJlc3VsdCkgeyByZXR1cm4gJGZhbHNlIH0NCg0KICAgICRJUEFkZHJlc3MgPSAkcmVzdWx0LklQQWRkcmVzcw0KICAgICRTdWJuZXRNYXNrID0gJHJlc3VsdC5TdWJuZXRNYXNrDQogICAgJHByZWZpeCA9IFN1Ym5ldE1hc2tUb1ByZWZpeCAkU3VibmV0TWFzaw0KDQogICAgJGV4aXN0cyA9ICRpcFNlY3VyaXR5Tm9kZS5hZGQgfCBXaGVyZS1PYmplY3QgeyAkXy5pcEFkZHJlc3MgLWVxICRJUEFkZHJlc3MgLWFuZCAkXy5zdWJuZXRNYXNrIC1lcSAkU3VibmV0TWFzayB9DQogICAgaWYgKC1ub3QgJGV4aXN0cykgew0KICAgICAgICBpZiAoJERyeVJ1bikgew0KICAgICAgICAgICAgV3JpdGUtSG9zdCAiRHJ5UnVuOiBXb3VsZCBhZGQgSVAgJElQQWRkcmVzcy8kcHJlZml4IiAtRm9yZWdyb3VuZENvbG9yIEN5YW4NCiAgICAgICAgfSBlbHNlIHsNCiAgICAgICAgICAgICRuZXdJUCA9ICR4bWwuQ3JlYXRlRWxlbWVudCgiYWRkIikNCiAgICAgICAgICAgICRuZXdJUC5TZXRBdHRyaWJ1dGUoImlwQWRkcmVzcyIsICRJUEFkZHJlc3MpDQogICAgICAgICAgICAkbmV3SVAuU2V0QXR0cmlidXRlKCJzdWJuZXRNYXNrIiwgJFN1Ym5ldE1hc2spDQogICAgICAgICAgICAkbmV3SVAuU2V0QXR0cmlidXRlKCJhbGxvd2VkIiwgInRydWUiKQ0KICAgICAgICAgICAgJGlwU2VjdXJpdHlOb2RlLkFwcGVuZENoaWxkKCRuZXdJUCkgfCBPdXQtTnVsbA0KICAgICAgICAgICAgV3JpdGUtSG9zdCAiQWRkZWQgSVAgJElQQWRkcmVzcy8kcHJlZml4IiAtRm9yZWdyb3VuZENvbG9yIEdyZWVuDQogICAgICAgIH0NCiAgICAgICAgcmV0dXJuICR0cnVlDQogICAgfSBlbHNlIHsNCiAgICAgICAgV3JpdGUtSG9zdCAiSVAgJElQQWRkcmVzcy8kcHJlZml4IGFscmVhZHkgZXhpc3RzIiAtRm9yZWdyb3VuZENvbG9yIFllbGxvdw0KICAgICAgICByZXR1cm4gJGZhbHNlDQogICAgfQ0KfQ0KDQpmdW5jdGlvbiBSZW1vdmUtQWxsb3dlZElQIHsNCiAgICBwYXJhbShbc3RyaW5nXSRDSURSKQ0KICAgICRyZXN1bHQgPSBDb252ZXJ0LUNJRFJUb0lQTWFzayAkQ0lEUg0KICAgIGlmICgtbm90ICRyZXN1bHQpIHsgcmV0dXJuICRmYWxzZSB9DQoNCiAgICAkSVBBZGRyZXNzID0gJHJlc3VsdC5JUEFkZHJlc3MNCiAgICAkU3VibmV0TWFzayA9ICRyZXN1bHQuU3VibmV0TWFzaw0KICAgICRwcmVmaXggPSBTdWJuZXRNYXNrVG9QcmVmaXggJFN1Ym5ldE1hc2sNCg0KICAgICRub2RlID0gJGlwU2VjdXJpdHlOb2RlLmFkZCB8IFdoZXJlLU9iamVjdCB7ICRfLmlwQWRkcmVzcyAtZXEgJElQQWRkcmVzcyAtYW5kICRfLnN1Ym5ldE1hc2sgLWVxICRTdWJuZXRNYXNrIH0NCiAgICBpZiAoJG5vZGUpIHsNCiAgICAgICAgaWYgKCREcnlSdW4pIHsNCiAgICAgICAgICAgIFdyaXRlLUhvc3QgIkRyeVJ1bjogV291bGQgcmVtb3ZlIElQICRJUEFkZHJlc3MvJHByZWZpeCIgLUZvcmVncm91bmRDb2xvciBDeWFuDQogICAgICAgIH0gZWxzZSB7DQogICAgICAgICAgICAkaXBTZWN1cml0eU5vZGUuUmVtb3ZlQ2hpbGQoJG5vZGUpIHwgT3V0LU51bGwNCiAgICAgICAgICAgIFdyaXRlLUhvc3QgIlJlbW92ZWQgSVAgJElQQWRkcmVzcy8kcHJlZml4IiAtRm9yZWdyb3VuZENvbG9yIEdyZWVuDQogICAgICAgIH0NCiAgICAgICAgcmV0dXJuICR0cnVlDQogICAgfSBlbHNlIHsNCiAgICAgICAgV3JpdGUtSG9zdCAiSVAgJElQQWRkcmVzcy8kcHJlZml4IG5vdCBmb3VuZCIgLUZvcmVncm91bmRDb2xvciBZZWxsb3cNCiAgICAgICAgcmV0dXJuICRmYWxzZQ0KICAgIH0NCn0NCg0KIyAtLS0gRlFETiBNYW5hZ2VtZW50IC0tLQ0KZnVuY3Rpb24gR2V0LUZRRE4geyAoJHhtbC5jb25maWd1cmF0aW9uLidzeXN0ZW0ud2ViU2VydmVyJy5yZXdyaXRlLm91dGJvdW5kUnVsZXMucnVsZSB8IFdoZXJlLU9iamVjdCB7ICRfLm5hbWUgLWVxICJQb3dlclN5bmNQcm9SZXZlcnNlUHJveHlPdXRib3VuZFJ1bGUxIiB9KS5hY3Rpb24udmFsdWUgLXJlcGxhY2UgJ2h0dHBzOi8vKFteL10rKS8uKicsJyQxJyB9DQoNCmZ1bmN0aW9uIFNldC1GUUROIHsNCiAgICBwYXJhbShbc3RyaW5nXSROZXdEb21haW4pDQogICAgJHJ1bGUgPSAkeG1sLmNvbmZpZ3VyYXRpb24uJ3N5c3RlbS53ZWJTZXJ2ZXInLnJld3JpdGUub3V0Ym91bmRSdWxlcy5ydWxlIHwgV2hlcmUtT2JqZWN0IHsgJF8ubmFtZSAtZXEgIlBvd2VyU3luY1Byb1JldmVyc2VQcm94eU91dGJvdW5kUnVsZTEiIH0NCiAgICAkb2xkRG9tYWluID0gJHJ1bGUuYWN0aW9uLnZhbHVlIC1yZXBsYWNlICdodHRwczovLyhbXi9dKykvLionLCckMScNCg0KICAgIGlmICgkb2xkRG9tYWluIC1uZSAkTmV3RG9tYWluKSB7DQogICAgICAgIGlmICgkRHJ5UnVuKSB7DQogICAgICAgICAgICBXcml0ZS1Ib3N0ICJEcnlSdW46IFdvdWxkIHVwZGF0ZSByZXdyaXRlIGRvbWFpbiBmcm9tICRvbGREb21haW4gdG8gJE5ld0RvbWFpbiIgLUZvcmVncm91bmRDb2xvciBDeWFuDQogICAgICAgIH0gZWxzZSB7DQogICAgICAgICAgICAkcnVsZS5hY3Rpb24udmFsdWUgPSAkcnVsZS5hY3Rpb24udmFsdWUgLXJlcGxhY2UgImh0dHBzOi8vW14vXSsvIiwgImh0dHBzOi8vJE5ld0RvbWFpbi8iDQogICAgICAgICAgICBXcml0ZS1Ib3N0ICJVcGRhdGVkIHJld3JpdGUgZG9tYWluIGZyb20gJG9sZERvbWFpbiB0byAkTmV3RG9tYWluIiAtRm9yZWdyb3VuZENvbG9yIEdyZWVuDQogICAgICAgIH0NCiAgICAgICAgcmV0dXJuICR0cnVlDQogICAgfSBlbHNlIHsNCiAgICAgICAgV3JpdGUtSG9zdCAiUmV3cml0ZSBkb21haW4gaXMgYWxyZWFkeSAkTmV3RG9tYWluIiAtRm9yZWdyb3VuZENvbG9yIFllbGxvdw0KICAgICAgICByZXR1cm4gJGZhbHNlDQogICAgfQ0KfQ0KDQojIC0tLSBTYXZlIENvbmZpZyB3aXRoIEJhY2t1cCBhbmQgSUlTIFJlbWluZGVyIC0tLQ0KZnVuY3Rpb24gU2F2ZS1Db25maWcgew0KICAgIGlmICgkRHJ5UnVuKSB7IA0KICAgICAgICBXcml0ZS1Ib3N0ICJEcnlSdW4gZW5hYmxlZDogd2ViLmNvbmZpZyB3b3VsZCBiZSB1cGRhdGVkIGFuZCBiYWNrZWQgdXAiIC1Gb3JlZ3JvdW5kQ29sb3IgQ3lhbg0KICAgICAgICByZXR1cm4gDQogICAgfQ0KDQogICAgJHRpbWVzdGFtcCA9IEdldC1EYXRlIC1Gb3JtYXQgInl5eXlNTWRkSEhtbXNzIg0KICAgICRiYWNrdXAgPSAiJENvbmZpZ1BhdGguJHRpbWVzdGFtcCINCiAgICBSZW5hbWUtSXRlbSAtUGF0aCAkQ29uZmlnUGF0aCAtTmV3TmFtZSAkYmFja3VwDQogICAgJHhtbC5TYXZlKCRDb25maWdQYXRoKQ0KICAgIFdyaXRlLUhvc3QgIndlYi5jb25maWcgdXBkYXRlZCBzdWNjZXNzZnVsbHkiIC1Gb3JlZ3JvdW5kQ29sb3IgQ3lhbg0KICAgIFdyaXRlLUhvc3QgIkJhY2t1cCBzYXZlZCBhcyAkYmFja3VwIiAtRm9yZWdyb3VuZENvbG9yIERhcmtDeWFuDQogICAgV3JpdGUtSG9zdCAiUmVtaW5kZXI6IFJlc3RhcnQgSUlTIGZvciBjaGFuZ2VzIHRvIHRha2UgZWZmZWN0OiIgLUZvcmVncm91bmRDb2xvciBZZWxsb3cNCiAgICBXcml0ZS1Ib3N0ICIgICAgaWlzcmVzZXQgL25vZm9yY2UiIC1Gb3JlZ3JvdW5kQ29sb3IgWWVsbG93DQp9DQoNCiMgLS0tIFBvcHVsYXRlIGN1cnJlbnQgY29uZmlnIGJlZm9yZSBhbnkgY2hhbmdlcyAtLS0NCiRvdXRwdXQgPSBAew0KICAgIEFsbG93ZWRJUHMgPSBTaG93LUFsbG93ZWRJUHMNCiAgICBSZXdyaXRlRlFETiA9IEdldC1GUURODQp9DQoNCiMgLS0tIENMSSBPcGVyYXRpb25zIC0tLQ0KJGNoYW5nZWQgPSAkZmFsc2UNCiRyYW5BbnlBY3Rpb24gPSAkZmFsc2UNCg0KaWYgKCRHZXRDb25maWcpIHsgJHJhbkFueUFjdGlvbiA9ICR0cnVlIH0NCg0KaWYgKCRBZGRBbGxvd2VkQWRkcmVzc2VzKSB7IA0KICAgIGZvcmVhY2ggKCRjaWRyIGluICRBZGRBbGxvd2VkQWRkcmVzc2VzKSB7IA0KICAgICAgICBpZiAoQWRkLUFsbG93ZWRJUCAtQ0lEUiAkY2lkcikgeyAkY2hhbmdlZCA9ICR0cnVlIH0gDQogICAgfSANCiAgICAkcmFuQW55QWN0aW9uID0gJHRydWUgDQp9DQoNCmlmICgkUmVtb3ZlQWxsb3dlZEFkZHJlc3NlcykgeyANCiAgICBmb3JlYWNoICgkY2lkciBpbiAkUmVtb3ZlQWxsb3dlZEFkZHJlc3NlcykgeyANCiAgICAgICAgaWYgKFJlbW92ZS1BbGxvd2VkSVAgLUNJRFIgJGNpZHIpIHsgJGNoYW5nZWQgPSAkdHJ1ZSB9IA0KICAgIH0gDQogICAgJHJhbkFueUFjdGlvbiA9ICR0cnVlIA0KfQ0KDQppZiAoJFNldEZRRE4pIHsgDQogICAgaWYgKFNldC1GUUROIC1OZXdEb21haW4gJFNldEZRRE4pIHsgJGNoYW5nZWQgPSAkdHJ1ZSB9IA0KICAgICRyYW5BbnlBY3Rpb24gPSAkdHJ1ZSANCn0NCg0KIyBSZWZyZXNoIG91dHB1dCBhZnRlciBhbnkgY2hhbmdlcw0KaWYgKCRjaGFuZ2VkKSB7DQogICAgJG91dHB1dC5BbGxvd2VkSVBzID0gU2hvdy1BbGxvd2VkSVBzDQogICAgJG91dHB1dC5SZXdyaXRlRlFETiA9IEdldC1GUURODQp9DQoNCiMgU2F2ZSBjaGFuZ2VzDQppZiAoJGNoYW5nZWQgLWFuZCAtbm90ICREcnlSdW4pIHsgU2F2ZS1Db25maWcgfQ0KZWxzZWlmICgkY2hhbmdlZCAtYW5kICREcnlSdW4pIHsgV3JpdGUtSG9zdCAiRHJ5UnVuOiBubyBjaGFuZ2VzIHNhdmVkIiAtRm9yZWdyb3VuZENvbG9yIEN5YW4gfQ0KDQojIE91dHB1dCByZXN1bHRzDQppZiAoJEFzSnNvbikgew0KICAgICRvdXRwdXQgfCBDb252ZXJ0VG8tSnNvbiAtRGVwdGggMw0KfQ0KZWxzZSB7DQogICAgV3JpdGUtSG9zdCAiQWxsb3dlZCBJUHM6Ig0KICAgICRvdXRwdXQuQWxsb3dlZElQcyB8IEZvckVhY2gtT2JqZWN0IHsgDQogICAgICAgICRwcmVmaXggPSBTdWJuZXRNYXNrVG9QcmVmaXggJF8uU3VibmV0TWFzaw0KICAgICAgICBXcml0ZS1Ib3N0ICIgICQoJF8uSVBBZGRyZXNzKS8kcHJlZml4Ig0KICAgIH0NCiAgICBXcml0ZS1Ib3N0ICJSZXdyaXRlIEZRRE46ICQoJG91dHB1dC5SZXdyaXRlRlFETikiDQoNCiAgICAjIFNob3cgYXZhaWxhYmxlIGZsYWdzIGlmIG5vIGFjdGlvbiB3YXMgcmVxdWVzdGVkDQogICAgaWYgKC1ub3QgJHJhbkFueUFjdGlvbikgew0KICAgICAgICBXcml0ZS1Ib3N0ICJgbkF2YWlsYWJsZSBmbGFnczoiIC1Gb3JlZ3JvdW5kQ29sb3IgQ3lhbg0KICAgICAgICBXcml0ZS1Ib3N0ICIgIC1HZXRDb25maWcgICAgICAgICAgICAgICAjIFNob3cgY3VycmVudCBJUHMgYW5kIEZRRE4iDQogICAgICAgIFdyaXRlLUhvc3QgIiAgLUFkZEFsbG93ZWRBZGRyZXNzZXMgICAgICMgQWRkIElQKHMpIGluIENJRFIgb3IgcGxhaW4gSVAgKGRlZmF1bHRzIHRvIC8zMikiDQogICAgICAgIFdyaXRlLUhvc3QgIiAgLVJlbW92ZUFsbG93ZWRBZGRyZXNzZXMgICMgUmVtb3ZlIElQKHMpIGluIENJRFIgb3IgcGxhaW4gSVAiDQogICAgICAgIFdyaXRlLUhvc3QgIiAgLVNldEZRRE4gPGRvbWFpbj4gICAgICAgICMgU2V0IG5ldyByZXdyaXRlIGRvbWFpbiINCiAgICAgICAgV3JpdGUtSG9zdCAiICAtRHJ5UnVuICAgICAgICAgICAgICAgICAgIyBTaG93IHdoYXQgd291bGQgY2hhbmdlIHdpdGhvdXQgbW9kaWZ5aW5nIHdlYi5jb25maWciDQogICAgICAgIFdyaXRlLUhvc3QgIiAgLUFzSnNvbiAgICAgICAgICAgICAgICAgICMgT3V0cHV0IGluIEpTT04gZm9ybWF0Ig0KICAgIH0NCn0NCg==
-"@
+$WebConfigScriptURL = "https://raw.githubusercontent.com/jrichardpsp/psp-autoinstall-beta/refs/heads/main/WebConfig_Editor.ps1"
 
 # Web.Config Information
 $WebConfigName = "web.config"
@@ -887,36 +885,90 @@ function Test-PowerSyncPro {
     # Return true if either condition is met
     return ($serviceRunning -or $msiInstalled)
 }
-function Install-Scripts{
-  param(
-    [string]$TargetFile,
-    [string]$TargetFolder,
-    [string]$Encoded
-  )
+function Install-Scripts {
+    <#
+    .SYNOPSIS
+        Drops a PowerShell script to disk from either a Base64-encoded string or a URL.
 
-  $TargetPath   = Join-Path -Path $TargetFolder -ChildPath $TargetFile
+    .PARAMETER TargetFile
+        The filename to save (e.g., 'Cert-Puller_PoshACME.ps1').
 
-  # Decode back to original script text
-  $Bytes       = [Convert]::FromBase64String($Encoded)
-  $ChildScript = [System.Text.Encoding]::UTF8.GetString($Bytes)
+    .PARAMETER TargetFolder
+        The folder path where the file should be saved.
 
-  # Ensure the folder exists
-  if (-not (Test-Path $TargetFolder)) {
-      New-Item -Path $TargetFolder -ItemType Directory -Force | Out-Null
-  }
+    .PARAMETER Encoded
+        Base64-encoded string of the script content (optional).
 
-  # Write the decoded script with UTF-8 (no BOM), compatible across PS versions
-  if ($PSVersionTable.PSEdition -eq 'Core' -or $PSVersionTable.PSVersion.Major -ge 6) {
-      # PowerShell 7+ supports utf8NoBOM
-      $ChildScript | Out-File -FilePath $TargetPath -Encoding utf8NoBOM -Force
-  }
-  else {
-      # Windows PowerShell 5.1 fallback: use .NET directly
-      $Utf8NoBom = New-Object System.Text.UTF8Encoding($False)  # $False = no BOM
-      [System.IO.File]::WriteAllText($TargetPath, $ChildScript, $Utf8NoBom)
-  }
+    .PARAMETER Url
+        HTTP/HTTPS URL to download the script from (optional).
 
-  Write-Host "Dropped script to $TargetPath"
+    .EXAMPLE
+        Install-Scripts -TargetFile 'Child.ps1' -TargetFolder 'C:\Scripts' -Encoded $Base64String
+
+    .EXAMPLE
+        Install-Scripts -TargetFile 'Child.ps1' -TargetFolder 'C:\Scripts' -Url 'https://example.com/script.ps1'
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [string]$TargetFile,
+
+        [Parameter(Mandatory)]
+        [string]$TargetFolder,
+
+        [string]$Encoded,
+
+        [string]$Url
+    )
+
+    try {
+        $TargetPath = Join-Path -Path $TargetFolder -ChildPath $TargetFile
+
+        # Ensure the folder exists
+        if (-not (Test-Path $TargetFolder)) {
+            New-Item -Path $TargetFolder -ItemType Directory -Force | Out-Null
+        }
+
+        $ChildScript = $null
+
+        if ($Encoded) {
+            Write-Host "Decoding Base64 content..." -ForegroundColor Cyan
+            $Bytes = [Convert]::FromBase64String($Encoded)
+            $ChildScript = [System.Text.Encoding]::UTF8.GetString($Bytes)
+        }
+        elseif ($Url) {
+            Write-Host "Downloading script from $Url ..." -ForegroundColor Cyan
+            try {
+                $ChildScript = (Invoke-WebRequest -Uri $Url -UseBasicParsing -ErrorAction Stop).Content
+            }
+            catch {
+                throw "Failed to download script from $Url. Error: $($_.Exception.Message)"
+            }
+        }
+        else {
+            throw "You must specify either -Encoded or -Url."
+        }
+
+        if (-not $ChildScript) {
+            throw "No content received. Aborting write operation."
+        }
+
+        # Write with UTF-8 (no BOM), cross-version compatible
+        if ($PSVersionTable.PSEdition -eq 'Core' -or $PSVersionTable.PSVersion.Major -ge 6) {
+            $ChildScript | Out-File -FilePath $TargetPath -Encoding utf8NoBOM -Force
+        }
+        else {
+            $Utf8NoBom = New-Object System.Text.UTF8Encoding($False)
+            [System.IO.File]::WriteAllText($TargetPath, $ChildScript, $Utf8NoBom)
+        }
+
+        Write-Host "Script written to $TargetPath" -ForegroundColor Green
+        return $TargetPath
+    }
+    catch {
+        Write-Host "Error in Install-Scripts: $($_.Exception.Message)" -ForegroundColor Red
+        return $null
+    }
 }
 function Install-WebConfig {
     param(
@@ -2171,6 +2223,64 @@ function Get-ListeningPort {
         return @()
     }
 }
+function Add-ServiceDependency {
+    <#
+    .SYNOPSIS
+        Safely adds one or more dependencies to a Windows service using sc.exe.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$ServiceName,
+        [Parameter(Mandatory)][string[]]$DependsOn
+    )
+
+    # Ensure elevated
+    $isAdmin = (New-Object Security.Principal.WindowsPrincipal(
+        [Security.Principal.WindowsIdentity]::GetCurrent()
+    )).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+    if (-not $isAdmin) { throw "Please run this in an elevated PowerShell session." }
+
+    # Confirm target service exists
+    $null = Get-Service -Name $ServiceName -ErrorAction Stop
+
+    # --- Gather existing dependencies (CIM first, then registry)
+    $existing = @()
+    try {
+        $cim = Get-CimInstance -ClassName Win32_Service -Filter "Name='$ServiceName'" -ErrorAction Stop
+        if ($cim.PSObject.Properties.Name -contains 'Dependencies' -and $cim.Dependencies) {
+            $existing = @($cim.Dependencies)
+        }
+    } catch {}
+
+    if (-not $existing) {
+        $svcPath = "HKLM:\SYSTEM\CurrentControlSet\Services\$ServiceName"
+        try {
+            $regVal = (Get-ItemProperty -Path $svcPath -Name DependOnService -ErrorAction SilentlyContinue).DependOnService
+            if ($regVal) { $existing = @($regVal) }
+        } catch {}
+    }
+
+    # --- Merge, remove blanks and duplicates (force array form)
+    $newList = @(@($existing) + @($DependsOn)) |
+        Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+        Select-Object -Unique
+    $newList = @($newList)
+
+    # --- Build dependency string (slash-separated)
+    $depString   = if ($newList.Count -gt 0) { ($newList -join '/') } else { '' }
+    $displayList = if ($depString) { $depString } else { '<none>' }
+
+    # --- Status output
+    Write-Host "Updating Service Dependencies for $ServiceName to include $DependsOn" -ForegroundColor Cyan
+
+    # --- Apply via sc.exe (always perform update)
+    $args = @('config', $ServiceName, "depend= $depString")
+    $p = Start-Process -FilePath sc.exe -ArgumentList $args -NoNewWindow -Wait -PassThru
+    if ($p.ExitCode -ne 0) { throw "sc.exe failed with exit code $($p.ExitCode)." }
+
+    Write-Host "`nAfter update:" -ForegroundColor Cyan
+    sc.exe qc $ServiceName
+}
 # ------------------ Menu & UI ------------------
 function Show-CertificateTypeMenu {
     Clear-Host 2>$null
@@ -2479,8 +2589,7 @@ function Run-Wizard {
 
     return $CertConfig
 }
-
-
+# -------------------------------------------------
 # Menu / Script Actions / Logic
 # Initialize logging
 
@@ -2515,7 +2624,7 @@ try{
 
     Write-Host "OS check passed - continuing installation..." -ForegroundColor Green
 
-    #Test if Ports we require during the installation are in-use.  Bail out if conflicts occur.
+    # Test if Ports we require during the installation are in-use.  Bail out if conflicts occur.
     # Define which ports to check
     $checkPorts = 80,443,5000,5001
     $noConflicts = $false
@@ -2535,7 +2644,7 @@ try{
     # Separate groups
     if (-not $noConflicts){
         $reverseProxyConflicts = $active | Where-Object { $_.Port -in 80,443 }
-    $kestrelConflicts      = $active | Where-Object { $_.Port -in 5000,5001 }
+        $kestrelConflicts      = $active | Where-Object { $_.Port -in 5000,5001 }
 
     $conflictDetected = $false
 
@@ -2649,20 +2758,28 @@ try{
     Install-ARR -ARRInstalled $arrStatus.ARRInstalled -ARRActivated $arrStatus.ARRActivated -ArrUrl $ArrUrl -tempDir $tempDir
 
 
-    # Install PSP w/ SQLExpress Backend, Sane Defaults - We don't need to check its running, we did that above.
+    # Install PSP w/ SQL Express Backend, Sane Defaults - We don't need to check its running, we did that above.
     Install-PSP -PSPUrl $PSPUrl -tempDir $tempDir -FrontendHost $FrontendHost
 
-    # Drop Support Scripts and custom Webconfig - We don't check that they already exist.
+    # Set PSP to be Dependent on SQL running before it starts as a service.
+    Add-ServiceDependency -ServiceName "PowerSyncPro" -DependsOn $ExpectedSQLServiceName
 
+    # Drop Support Scripts and custom Webconfig - We don't check that they already exist.
     # ACME Cert Puller - if doing a LetsEncrypt Certificate
     if ($CertType -eq "LetsEncrypt"){
         Write-Host "Installing ACME / LetsEncrypt Certificate Tool `($CertPullerScriptName`) to $ScriptFolder" -ForegroundColor Cyan
-        Install-Scripts -TargetFile $CertPullerScriptName -TargetFolder $ScriptFolder -Encoded $CertPullerScriptEncoded
+        Install-Scripts -TargetFile $CertPullerScriptName -TargetFolder $ScriptFolder -URL $CertPullerURL
+    }
+
+    # Cert Renewer - if doing a BYOC Certificate Install
+    if ($CertType -eq "BYOC"){
+        Write-Host "Installing Certificate Renewal Tool `($CertRenewerScriptName`) to $ScriptFolder" -ForegroundColor Cyan
+        Install-Scripts -TargetFile $CertRenewerScriptName -TargetFolder $ScriptFolder -URL $CertRenewerURL
     }
  
     # WebConfig Editor Tool
     Write-Host "Installing Web.Config Editor Tool `($WebConfigScriptName`) to $ScriptFolder" -ForegroundColor Cyan
-    Install-Scripts -TargetFile $WebConfigScriptName -TargetFolder $ScriptFolder -Encoded $WebConfigScriptEncoded
+    Install-Scripts -TargetFile $WebConfigScriptName -TargetFolder $ScriptFolder -URL $WebConfigScriptURL
 
     # Install Custom WebConifg
     Write-Host "Installing Customized $WebConfigName to $WebConfigFolder" -ForegroundColor Cyan
@@ -2780,9 +2897,21 @@ try{
         Write-Host "Installation Complete but Certificate Installation Failed..." -ForegroundColor Red
     }
     Write-Host "`n"
-    Write-Host "Admin access to PSP via the Reverse Proxy - e.g. https://$FrontEndHost"
-    Write-Host "has been restricted to localhost only."
+
+    # Print Relevant Info per Certificate Type
+    switch($CertType){
+        'LetsEncrypt' {
+            Write-Host "LetsEncrypt certificates must be renewed every 90 days." -ForegroundColor Cyan
+            Write-Host "A scheduled task has been installed to run C:\Scripts\Cert-Puller_PoshACME.ps1 every week to check the status of the certificate."
+            Write-Host "You must leave Port 80 on this server exposed to the Internet for sucessful certificate renewals."
+        }
+        'BYOC' {
+            Write-Host "Your BYOC PFX has been installed." -ForegroundColor Cyan
+            Write-Host "To renew your certificate, please use the renewal script at C:\Scripts\Cert-Renewer.ps1"
+        }
+    }
     Write-Host "`n"
+    Write-Host "Admin access to PSP via the Reverse Proxy - e.g. https://$FrontEndHost has been restricted to localhost only." -ForegroundColor Cyan
     Write-Host "You can modify hosts which are allowed to access the HTTPS Reverse Proxy by running C:\Scripts\WebConfig_Editor.ps1."
     Write-Host "This restriction does not apply to https://$FrontEndHost/Agent which is used for the PSP Migration Agent."
     Write-Host "`n"
