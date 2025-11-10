@@ -1393,7 +1393,7 @@ function Install-HostsFile {
         $HostsContent = Get-Content $HostsPath -ErrorAction Stop
     }
     catch {
-        Write-Warning "Failed to read hosts file: $($_.Exception.Message)"
+        Err "Failed to read hosts file: $($_.Exception.Message)"
         return $false
     }
 
@@ -1543,7 +1543,7 @@ function Install-CustomPfxCertificate {
                 $json = Get-Content $AppSettingsPath -Raw | ConvertFrom-Json
 
                 if ($json.Kestrel.Endpoints.PSObject.Properties.Name -notcontains "Https") {
-                    Write-Warning "HTTPS endpoint not found in appsettings.json. Creating one on port 5001."
+                    Warn "HTTPS endpoint not found in appsettings.json. Creating one on port 5001."
                     $json.Kestrel.Endpoints | Add-Member -MemberType NoteProperty -Name "Https" -Value @{
                         Url       = "https://*:5001"
                         Protocols = "Http1AndHttp2"
@@ -1558,7 +1558,7 @@ function Install-CustomPfxCertificate {
                 } else {
                     $configuredSubject = $json.Kestrel.Endpoints.Https.Certificate.Subject
                     if ($configuredSubject -ne $actualSubject) {
-                        Write-Warning "Configured cert subject ($configuredSubject) does not match new cert ($actualSubject). Updating automatically."
+                        Warn "Configured cert subject ($configuredSubject) does not match new cert ($actualSubject). Updating automatically."
                         $json.Kestrel.Endpoints.Https.Certificate.Subject = $actualSubject
                     } else {
                         Info "appsettings.json already matches current certificate subject."
@@ -1692,7 +1692,7 @@ function Install-SelfSignedCertificate {
             $json = Get-Content $AppSettingsPath -Raw | ConvertFrom-Json
 
             if ($json.Kestrel.Endpoints.PSObject.Properties.Name -notcontains "Https") {
-                Write-Warning "HTTPS endpoint not found in appsettings.json. Creating one on port 5001."
+                Warn "HTTPS endpoint not found in appsettings.json. Creating one on port 5001."
                 $json.Kestrel.Endpoints | Add-Member -MemberType NoteProperty -Name "Https" -Value @{
                     Url       = "https://*:5001"
                     Protocols = "Http1AndHttp2"
@@ -1707,7 +1707,7 @@ function Install-SelfSignedCertificate {
             } else {
                 $configuredSubject = $json.Kestrel.Endpoints.Https.Certificate.Subject
                 if ($configuredSubject -ne $DnsName) {
-                    Write-Warning "Configured cert subject ($configuredSubject) does not match new cert ($DnsName). Updating automatically."
+                    Warn "Configured cert subject ($configuredSubject) does not match new cert ($DnsName). Updating automatically."
                     $json.Kestrel.Endpoints.Https.Certificate.Subject = $DnsName
                 } else {
                     Info "appsettings.json already matches the current certificate subject."
@@ -1736,12 +1736,12 @@ function Install-SelfSignedCertificate {
                     Info "Updating SSL binding path $($sslBinding.PSPath)"
                     Set-Item -Path $sslBinding.PSPath -Value $certObject -Force
                 } else {
-                    Write-Warning "No SSL binding object found for port 443. Creating one..."
+                    Warn "No SSL binding object found for port 443. Creating one..."
                     $sslPath = "IIS:\SslBindings\0.0.0.0!443"
                     New-Item $sslPath -Value $certObject -SSLFlags 0 | Out-Null
                 }
             } else {
-                Write-Warning "No SSL bindings currently exist. Creating one..."
+                Warng "No SSL bindings currently exist. Creating one..."
                 $sslPath = "IIS:\SslBindings\0.0.0.0!443"
                 New-Item $sslPath -Value $certObject -SSLFlags 0 | Out-Null
             }
@@ -3149,7 +3149,7 @@ else {
             }
         }
         default {
-            Write-Warning "Unknown certificate type: $CertType - Certificate has not been installed.  Please contact support."
+            Warn "Unknown certificate type: $CertType - Certificate has not been installed.  Please contact support."
         }
     }
 
