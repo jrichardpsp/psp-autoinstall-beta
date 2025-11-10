@@ -7,30 +7,27 @@
     Obtains or renews a Let's Encrypt certificate using Posh-ACME and stores it in the Local Machine certificate store.
 
 .DESCRIPTION
-    This script requests or renews a Let's Encrypt certificate via Posh-ACME.
-    It checks the Local Machine certificate store for an existing cert. If valid and not near expiry,
-    it skips renewal. Otherwise, it requests a new one, imports it, and deletes all old ones.
+    Requests or renews a Let's Encrypt certificate via Posh-ACME.
+    If a valid certificate exists and is not near expiry, it skips renewal unless -ForcePostInstall is used.
+    After obtaining or validating the certificate, it updates permissions, PowerSyncPro configuration,
+    IIS bindings, and restarts the PowerSyncPro service.
+
+.NOTES
+Date:           November/2025
+Version:        0.3
+Update:         Added -ForcePostInstall flag and hybrid key logic.
+Disclaimer:     This script is provided 'AS IS' with no warranty.
+Copyright (c)   2025 Declaration Software
 
 .PARAMETER Domain
-    The domain for which to request or renew the certificate (e.g., cert-test.rocklightnetworks.com).
+    The domain for which to request or renew the certificate.
 
 .PARAMETER ContactEmail
     The email address for Let's Encrypt account registration.
 
-.PARAMETER DaysBeforeExpiry
-    Days before certificate expiry to trigger renewal (default: 30).
+.PARAMETER ForcePostInstall
+    Forces all post-install configuration tasks to run even if the certificate is still valid.
 
-.PARAMETER StoreLocation
-    The certificate store location (default: Cert:\LocalMachine\My).
-
-.PARAMETER WebRoot
-    The web server root for HTTP-01 challenge files (default: C:\inetpub\wwwroot).
-
-.PARAMETER LogPath
-    Path to save log file (default: C:\Logs\LetsEncryptRenewal_<date>.txt).
-
-.PARAMETER Help
-    Shows usage information.
 #>
 
 [CmdletBinding()]
@@ -54,42 +51,100 @@ param (
     [string]$LogPath = "C:\Logs\LetsEncryptRenewal_$(Get-Date -Format 'yyyyMMdd').txt",
 
     [Parameter(Mandatory=$false)]
+    [switch]$ForcePostInstall,
+
+    [Parameter(Mandatory=$false)]
     [switch]$Help
 )
+# ------------------ Logging Functions ------------------
+function Info  { param($Message) Write-Host "[*] $Message" -ForegroundColor Cyan }
+function Ok    { param($Message) Write-Host "[+] $Message" -ForegroundColor Green }
+function Warn  { param($Message) Write-Host "[!] $Message" -ForegroundColor Yellow }
+function Err   { param($Message) Write-Host "[-] $Message" -ForegroundColor Red }
 
-# Show usage/help if -Help, no parameters, OR required values missing
+# ---------------------------------------------------------------------------
+# Helper Function: Grant-PrivateKeyAccess (compatible PowerShell 5–7)
+# ---------------------------------------------------------------------------
+function Grant-PrivateKeyAccess {
+    param(
+        [Parameter(Mandatory)] [System.Security.Cryptography.X509Certificates.X509Certificate2]$Certificate,
+        [Parameter(Mandatory)] [string]$User
+    )
+
+    try {
+        if (-not $Certificate.HasPrivateKey) {
+            Warn "Certificate does not contain a private key. Skipping permission update."
+            return
+        }
+
+        # Try to resolve the key path from the provider information
+        $keyProvInfo = $Certificate.PrivateKey.CspKeyContainerInfo
+        $keyPath = $null
+
+        # For modern CNG keys, fall back to provider lookup via certutil
+        if (-not $keyProvInfo) {
+            $thumb = $Certificate.Thumbprint
+            $keyName = (certutil -store my $thumb | Select-String 'Unique container name:' | ForEach-Object { $_ -replace '.*:\s*','' }).Trim()
+            if ($keyName) {
+                $keyPath = Join-Path "$env:ProgramData\Microsoft\Crypto\Keys" $keyName
+            }
+        } else {
+            $keyPath = Join-Path "$env:ProgramData\Microsoft\Crypto\RSA\MachineKeys" $keyProvInfo.UniqueKeyContainerName
+        }
+
+        if (-not $keyPath) {
+            Warn "Could not resolve key path from certificate. Skipping permission update."
+            return
+        }
+
+        if (Test-Path $keyPath) {
+            $acl = Get-Acl $keyPath
+            $rule = New-Object System.Security.AccessControl.FileSystemAccessRule($User, "FullControl", "Allow")
+            $acl.SetAccessRule($rule)
+            Set-Acl $keyPath $acl
+            Ok "Granted FullControl on private key to $User"
+        } else {
+            Warn "Private key file not found at $keyPath"
+        }
+    }
+    catch {
+        Err "Failed to adjust private key permissions for $User : $($_.Exception.Message)"
+        throw
+    }
+}
+
+
+# ---------------------------------------------------------------------------
+# Usage Help
+# ---------------------------------------------------------------------------
 if ($PSBoundParameters.Count -eq 0 -or $Help -or -not $Domain -or -not $ContactEmail) {
 $usage = @'
-Usage: .\Cert-Puller_PoshACME.ps1 -Domain <domain> -ContactEmail <email> [-DaysBeforeExpiry <days>] [-StoreLocation <store>] [-WebRoot <path>] [-LogPath <path>] [-Help]
+Usage:
+  .\Cert-Puller_PoshACME.ps1 -Domain <domain> -ContactEmail <email> [-ForcePostInstall] [-DaysBeforeExpiry <days>]
 
-Parameters:
-    -Domain           (Required) Domain name to request or renew a certificate for.
-    -ContactEmail     (Required) Email address for Let's Encrypt account registration.
-    -DaysBeforeExpiry (Optional) Days before expiry to trigger renewal. Default: 30
-    -StoreLocation    (Optional) Certificate store location. Default: Cert:\LocalMachine\My
-    -WebRoot          (Optional) Path to web server root for HTTP-01 challenge. Default: C:\inetpub\wwwroot
-    -LogPath          (Optional) Path to save log file. Default: C:\Logs\LetsEncryptRenewal_<date>.txt
-    -Help             (Optional) Display this usage information.
+Description:
+  Requests or renews a Let's Encrypt certificate. Use -ForcePostInstall to
+  reapply PowerSyncPro and IIS configuration even if the existing cert is still valid.
 
 Example:
-    .\Cert-Puller_PoshACME.ps1 -Domain "example.com" -ContactEmail "admin@example.com"
+  .\Cert-Puller_PoshACME.ps1 -Domain "example.com" -ContactEmail "admin@example.com" -ForcePostInstall
 '@
     Write-Output $usage
     return
 }
 
-# Initialize logging
+# ---------------------------------------------------------------------------
+# Logging
+# ---------------------------------------------------------------------------
 if (-not (Test-Path -Path (Split-Path $LogPath -Parent))) {
     New-Item -ItemType Directory -Path (Split-Path $LogPath -Parent) -Force | Out-Null
 }
 Start-Transcript -Path $LogPath -Append
 
 try {
-    # Log Posh-ACME version
     $poshAcmeVersion = (Get-Module -Name Posh-ACME -ListAvailable | Sort-Object Version -Descending | Select-Object -First 1).Version
-    Write-Output "Posh-ACME Module Version: $poshAcmeVersion"
+    Info "Posh-ACME Module Version: $poshAcmeVersion"
 
-    # Check if certificate exists in the store and is valid
     $renewNeeded = $true
     $existingCert = Get-ChildItem -Path $StoreLocation | Where-Object {
         ($_.Subject -like "*CN=$Domain*" -or $_.DnsNameList -contains $Domain) -and
@@ -100,121 +155,120 @@ try {
     if ($existingCert) {
         $daysUntilExpiry = ($existingCert.NotAfter - (Get-Date)).Days
         if ($daysUntilExpiry -gt $DaysBeforeExpiry) {
-            Write-Output "Certificate for $Domain is valid until $($existingCert.NotAfter). No renewal needed."
+            Ok "Certificate for $Domain valid until $($existingCert.NotAfter). No renewal needed."
             $renewNeeded = $false
         } else {
-            Write-Output "Certificate for $Domain expires on $($existingCert.NotAfter). Renewal needed."
+            Warn "Certificate for $Domain expires on $($existingCert.NotAfter). Renewal needed."
         }
     } else {
-        Write-Output "No valid certificate found for $Domain in $StoreLocation. Requesting new certificate."
+        Info "No valid certificate found for $Domain. Requesting new certificate."
     }
 
-    if (-not $renewNeeded) {
+    if (-not $renewNeeded -and -not $ForcePostInstall) {
+        Info "Skipping renewal and post-install tasks."
+        Stop-Transcript
         return
     }
 
-    # Configure Posh-ACME server
-    Set-PAServer "LE_PROD"
-    Write-Verbose "Set Posh-ACME server to production"
-
-    # Set up account
-    $account = Get-PAAccount
-    if (-not $account) {
-        New-PAAccount -Contact $ContactEmail -AcceptTOS -Force
-        Write-Verbose "Created new Posh-ACME account for $ContactEmail"
-    } else {
-        Set-PAAccount -ID $account.ID -Contact $ContactEmail -Force
-        Write-Verbose "Using existing Posh-ACME account for $ContactEmail"
-    }
-
-    # Request or renew certificate
-    $cert = New-PACertificate $Domain -Plugin WebRoot -PluginArgs @{ WRPath = $WebRoot } -Force
-    if (-not $cert) { throw "Failed to obtain/renew certificate for $Domain" }
-    Write-Output "Successfully obtained/renewed certificate for $Domain"
-
-    # Get certificate details
-    $certDetails = Get-PACertificate -MainDomain $Domain
-    if (-not $certDetails) { throw "Failed to retrieve certificate details for $Domain" }
-
-    # Import new cert
-    $imported = Import-PfxCertificate -FilePath $certDetails.PfxFullChain `
-        -Password $certDetails.PfxPass `
-        -CertStoreLocation $StoreLocation `
-        -Exportable
-
-    if ($imported) {
-        Write-Output "Certificate for $Domain imported to $StoreLocation"
-    } else {
-        throw "Failed to import certificate for $Domain into $StoreLocation"
-    }
-
-    # Clean up old certs
-    $newCert = Get-ChildItem -Path $StoreLocation | Where-Object {
-        ($_.Subject -like "*CN=$Domain*" -or $_.DnsNameList -contains $Domain) -and
-        $_.Issuer -like "*Let's Encrypt*"
-    } | Sort-Object NotAfter -Descending | Select-Object -First 1
-
-    if ($newCert) {
-        Get-ChildItem -Path $StoreLocation | Where-Object {
-            ($_.Subject -like "*CN=$Domain*" -or $_.DnsNameList -contains $Domain) -and
-            $_.Issuer -like "*Let's Encrypt*" -and
-            $_.Thumbprint -ne $newCert.Thumbprint
-        } | ForEach-Object {
-            Write-Output "Removing old certificate (Thumbprint=$($_.Thumbprint), Expires=$($_.NotAfter))"
-            Remove-Item -Path "$StoreLocation\$($_.Thumbprint)" -Force
+    # -----------------------------------------------------------------------
+    # Request/Renew Certificate if Needed
+    # -----------------------------------------------------------------------
+    if ($renewNeeded) {
+        Set-PAServer "LE_PROD"
+        $account = Get-PAAccount
+        if (-not $account) {
+            New-PAAccount -Contact $ContactEmail -AcceptTOS -Force
+        } else {
+            Set-PAAccount -ID $account.ID -Contact $ContactEmail -Force
         }
+
+        $cert = New-PACertificate $Domain -Plugin WebRoot -PluginArgs @{ WRPath = $WebRoot } -Force
+        if (-not $cert) { throw "Failed to obtain/renew certificate for $Domain" }
+        Ok "Successfully obtained/renewed certificate for $Domain"
+
+        $certDetails = Get-PACertificate -MainDomain $Domain
+        if (-not $certDetails) { throw "Failed to retrieve certificate details for $Domain" }
+
+        $imported = Import-PfxCertificate -FilePath $certDetails.PfxFullChain `
+            -Password $certDetails.PfxPass `
+            -CertStoreLocation $StoreLocation `
+            -Exportable
+
+        if ($imported) {
+            Ok "Certificate imported to $StoreLocation"
+        } else {
+            throw "Failed to import certificate."
+        }
+
+        # Clean old certs
+        $newCert = Get-ChildItem -Path $StoreLocation | Where-Object {
+            ($_.Subject -like "*CN=$Domain*" -or $_.DnsNameList -contains $Domain) -and
+            $_.Issuer -like "*Let's Encrypt*"
+        } | Sort-Object NotAfter -Descending | Select-Object -First 1
+
+        if ($newCert) {
+            Get-ChildItem -Path $StoreLocation | Where-Object {
+                ($_.Subject -like "*CN=$Domain*" -or $_.DnsNameList -contains $Domain) -and
+                $_.Issuer -like "*Let's Encrypt*" -and
+                $_.Thumbprint -ne $newCert.Thumbprint
+            } | ForEach-Object {
+                Info "Removing old certificate Thumbprint=$($_.Thumbprint)"
+                Remove-Item -Path "$StoreLocation\$($_.Thumbprint)" -Force
+            }
+        }
+
+        Ok "Certificate for $Domain successfully obtained/renewed and old certificates cleaned up."
+    }
+    else {
+        Info "Using existing certificate for post-install tasks..."
+        $newCert = $existingCert
     }
 
-    Write-Output "Certificate for $Domain successfully obtained/renewed and old certificates cleaned up."
 }
 catch {
-    Write-Error "An error occurred: $($_.Exception.Message)"
+    Err "An error occurred: $($_.Exception.Message)"
     Exit 1
 }
 finally {
-    # Clean up challenge files
     $challengeDir = Join-Path -Path $WebRoot -ChildPath ".well-known\acme-challenge"
     if (Test-Path -Path $challengeDir) {
         Remove-Item -Path $challengeDir -Recurse -Force -ErrorAction SilentlyContinue
-        Write-Verbose "Cleaned up challenge files at $challengeDir"
     }
 }
 
-# Update permissions for PSP Service Account
-Write-Output "Checking certificate and adding permissions to PSP Service account if necessary..."
+# ---------------------------------------------------------------------------
+# Post-install tasks always run if -ForcePostInstall or new cert issued
+# ---------------------------------------------------------------------------
+Info "Checking certificate and adding permissions to PSP Service account if necessary..."
 $svc = Get-WmiObject Win32_Service -Filter "Name='PowerSyncPro'"
 if (-not $svc) {
-    Write-Warning "Service 'PowerSyncPro' not found. Skipping key permission check."
+    Warn "Service 'PowerSyncPro' not found. Skipping key permission check."
 } else {
     $svcUser = $svc.StartName
     if ($svcUser -eq "LocalSystem") {
-        Write-Output "PowerSyncPro is running as LocalSystem. No permissions update needed."
+        Ok "PowerSyncPro is running as LocalSystem. No permissions update needed."
     } else {
         try {
-            $ntAccount = New-Object System.Security.Principal.NTAccount($svcUser)
-            $resolvedUser = $ntAccount.Translate([System.Security.Principal.NTAccount]).Value
-            Write-Output "PowerSyncPro is running as $resolvedUser. Updating private key ACL..."
+            $svcUser = $svc.StartName
+	    if ($svcUser -match '^\.\\') {
+            	# Replace .\ with actual hostname
+            	$svcUser = "$env:COMPUTERNAME\$($svcUser -replace '^\.\\','')"
+	    }
+	    $ntAccount = New-Object System.Security.Principal.NTAccount($svcUser)
+	    $resolvedUser = $ntAccount.Translate([System.Security.Principal.NTAccount]).Value
 
-            $keyProvInfo = $newCert.PrivateKey.CspKeyContainerInfo.UniqueKeyContainerName
-            $machineKeysPath = "$env:ProgramData\Microsoft\Crypto\RSA\MachineKeys"
-            $keyPath = Join-Path $machineKeysPath $keyProvInfo
-
-            if (Test-Path $keyPath) {
-                $acl = Get-Acl $keyPath
-                $accessRule = New-Object System.Security.AccessControl.FileSystemAccessRule($resolvedUser, "FullControl", "Allow")
-                $acl.SetAccessRule($accessRule)
-                Set-Acl -Path $keyPath -AclObject $acl
-                Write-Output "Granted FullControl on private key to $resolvedUser"
-            } else {
-                Write-Warning "Private key file not found at $keyPath"
-            }
-        } catch {
-            Write-Error "Failed to adjust private key permissions for $svcUser : $($_.Exception.Message)"
+            Info "PowerSyncPro is running as $resolvedUser. Updating private key ACL..."
+            Grant-PrivateKeyAccess -Certificate $newCert -User $resolvedUser
+        }
+        catch {
+            Write-Error "[!] LetsEncrypt install failed: Failed to adjust private key permissions for $svcUser : $($_.Exception.Message)"
         }
     }
 }
 
+# ---------------------------------------------------------------------------
 # Update appsettings.json
+# ---------------------------------------------------------------------------
 $appSettingsPath = "C:\Program Files\PowerSyncPro\appsettings.json"
 
 try {
@@ -223,8 +277,7 @@ try {
         $actualSubject = $newCert.GetNameInfo('SimpleName', $false)
 
         if ($json.Kestrel.Endpoints.PSObject.Properties.Name -notcontains "Https") {
-            Write-Warning "HTTPS endpoint not found in appsettings.json. Creating one on port 5001."
-
+            Warn "HTTPS endpoint not found. Creating one on port 5001."
             $json.Kestrel.Endpoints | Add-Member -MemberType NoteProperty -Name "Https" -Value @{
                 Url       = "https://*:5001"
                 Protocols = "Http1AndHttp2"
@@ -235,71 +288,52 @@ try {
                     AllowInvalid = $true
                 }
             }
-
             $json | ConvertTo-Json -Depth 10 | Set-Content -Path $appSettingsPath -Encoding UTF8
-            Write-Output "Added HTTPS endpoint with new certificate subject $actualSubject."
         }
         else {
             $configuredSubject = $json.Kestrel.Endpoints.Https.Certificate.Subject
-
             if ($configuredSubject -ne $actualSubject) {
-                Write-Warning "Configured cert subject ($configuredSubject) does not match new cert ($actualSubject). Updating automatically."
+                Warn "Configured subject ($configuredSubject) differs from actual ($actualSubject). Updating."
                 $json.Kestrel.Endpoints.Https.Certificate.Subject = $actualSubject
                 $json | ConvertTo-Json -Depth 10 | Set-Content -Path $appSettingsPath -Encoding UTF8
-                Write-Output "Updated appsettings.json with new subject $actualSubject."
             } else {
-                Write-Output "appsettings.json already matches the current certificate subject."
+                Ok "appsettings.json already matches the current certificate subject."
             }
         }
-    }
-    else {
-        Write-Warning "appsettings.json not found at $appSettingsPath"
+    } else {
+        Warn "appsettings.json not found at $appSettingsPath"
     }
 }
 catch {
     Write-Error "Failed to update appsettings.json: $($_.Exception.Message)"
 }
 
-# Update IIS with new Cert
+# ---------------------------------------------------------------------------
+# Update IIS and Restart Service
+# ---------------------------------------------------------------------------
 Import-Module WebAdministration -ErrorAction Stop
-
 $siteName   = "Default Web Site"
 $newThumb   = $newCert.Thumbprint
 $certObject = Get-Item "Cert:\LocalMachine\My\$newThumb"
 
 $binding = Get-WebBinding -Name $siteName -Protocol "https" -Port 443 -ErrorAction SilentlyContinue
-
 if ($binding) {
-    Write-Output "Found existing HTTPS binding for '$siteName'. Updating with cert $newThumb"
-
+    Info "Updating existing HTTPS binding with cert $newThumb"
     $sslBindings = Get-ChildItem IIS:\SslBindings
-    if ($sslBindings) {
-        $sslBinding = $sslBindings | Where-Object { $_.Port -eq 443 } | Select-Object -First 1
-
-        if ($sslBinding) {
-            Write-Output "Updating SSL binding path $($sslBinding.PSPath)"
-            Set-Item -Path $sslBinding.PSPath -Value $certObject -Force
-        } else {
-            Write-Warning "No SSL binding object found for port 443. Creating one..."
-            $sslPath = "IIS:\SslBindings\0.0.0.0!443"
-            New-Item $sslPath -Value $certObject -SSLFlags 0 | Out-Null
-        }
+    $sslBinding = $sslBindings | Where-Object { $_.Port -eq 443 } | Select-Object -First 1
+    if ($sslBinding) {
+        Set-Item -Path $sslBinding.PSPath -Value $certObject -Force
     } else {
-        Write-Warning "No SSL bindings currently exist. Creating one..."
-        $sslPath = "IIS:\SslBindings\0.0.0.0!443"
-        New-Item $sslPath -Value $certObject -SSLFlags 0 | Out-Null
+        New-Item "IIS:\SslBindings\0.0.0.0!443" -Value $certObject -SSLFlags 0 | Out-Null
     }
 } else {
-    Write-Output "No HTTPS binding found for '$siteName'. Creating new binding with cert $newThumb"
+    Info "No HTTPS binding found. Creating new one."
     New-WebBinding -Name $siteName -Protocol https -Port 443 -IPAddress * -HostHeader ""
-    $sslPath = "IIS:\SslBindings\0.0.0.0!443"
-    New-Item $sslPath -Value $certObject -SSLFlags 0 | Out-Null
+    New-Item "IIS:\SslBindings\0.0.0.0!443" -Value $certObject -SSLFlags 0 | Out-Null
 }
+Ok "IIS binding updated successfully."
 
-Write-Output "IIS binding updated successfully."
-
-# Restart the service
 Restart-Service -Name "PowerSyncPro" -Force
-Write-Output "PowerSyncPro service restarted."
+Ok "PowerSyncPro service restarted."
 
 Stop-Transcript
