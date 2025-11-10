@@ -196,9 +196,21 @@ try {
 
         if ($imported) {
             Ok "Certificate imported to $StoreLocation"
+
+            # --- RELOAD the certificate from the store so the PrivateKey is bound correctly ---
+            $newCert = Get-ChildItem -Path $StoreLocation |
+                Where-Object { $_.Thumbprint -eq $imported.Thumbprint } |
+                Select-Object -First 1
+            if (-not $newCert) {
+                throw "Failed to reload certificate from store after import."
+            }
         } else {
             throw "Failed to import certificate."
         }
+
+        # Clean old certs
+        # (this will now use the already reloaded $newCert)
+
 
         # Clean old certs
         $newCert = Get-ChildItem -Path $StoreLocation | Where-Object {
