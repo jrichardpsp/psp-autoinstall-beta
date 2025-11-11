@@ -182,7 +182,7 @@ try {
             Set-PAAccount -ID $account.ID -Contact $ContactEmail -Force
         }
 
-        $cert = New-PACertificate $Domain -Plugin WebRoot -PluginArgs @{ WRPath = $WebRoot }
+        $cert = New-PACertificate $Domain -Plugin WebRoot -PluginArgs @{ WRPath = $WebRoot } -Force
         if (-not $cert) { throw "Failed to obtain/renew certificate for $Domain" }
         Ok "Successfully obtained/renewed certificate for $Domain"
 
