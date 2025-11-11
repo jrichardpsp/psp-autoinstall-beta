@@ -74,12 +74,17 @@ function Grant-PrivateKeyAccess {
     try {
         if (-not $Certificate.HasPrivateKey) {
             Warn "Certificate does not contain a private key. Skipping permission update."
-            return
+            return $false
         }
 
-        # Try to resolve the key path from the provider information
-        $keyProvInfo = $Certificate.PrivateKey.CspKeyContainerInfo
+        $keyProvInfo = $null
         $keyPath = $null
+
+        try {
+            $keyProvInfo = $Certificate.PrivateKey.CspKeyContainerInfo
+        } catch {
+            # .PrivateKey may be CNG-only; certutil fallback below will handle it
+        }
 
         # For modern CNG keys, fall back to provider lookup via certutil
         if (-not $keyProvInfo) {
@@ -94,7 +99,7 @@ function Grant-PrivateKeyAccess {
 
         if (-not $keyPath) {
             Warn "Could not resolve key path from certificate. Skipping permission update."
-            return
+            return $false
         }
 
         if (Test-Path $keyPath) {
@@ -103,15 +108,18 @@ function Grant-PrivateKeyAccess {
             $acl.SetAccessRule($rule)
             Set-Acl $keyPath $acl
             Ok "Granted FullControl on private key to $User"
+            return $true
         } else {
             Warn "Private key file not found at $keyPath"
+            return $false
         }
     }
     catch {
         Err "Failed to adjust private key permissions for $User : $($_.Exception.Message)"
-        throw
+        return $false
     }
 }
+
 
 
 # ---------------------------------------------------------------------------
@@ -292,8 +300,11 @@ if (-not $svc) {
 	    $ntAccount = New-Object System.Security.Principal.NTAccount($svcUser)
 	    $resolvedUser = $ntAccount.Translate([System.Security.Principal.NTAccount]).Value
 
-            Info "PowerSyncPro is running as $resolvedUser. Updating private key ACL..."
-            Grant-PrivateKeyAccess -Certificate $newCert -User $resolvedUser
+            $aclResult = Grant-PrivateKeyAccess -Certificate $newCert -User $resolvedUser
+            if (-not $aclResult) {
+                Warn "Private key ACL update failed or skipped. Will continue installation."
+                $Script:PSPCertPermissionPending = $true
+            }
         }
         catch {
             Write-Error "[!] LetsEncrypt install failed: Failed to adjust private key permissions for $svcUser : $($_.Exception.Message)"
