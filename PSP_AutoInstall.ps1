@@ -147,31 +147,45 @@ function Test-dotNet8Hosting {
         $runtimes = & dotnet --list-runtimes
     }
     catch {
-        Warn "Failed to execute 'dotnet' command. - Assuming no versions installed."
+        Warn "Failed to execute 'dotnet' command. Assuming no versions installed."
         return $false
     }
 
     if (-not $runtimes) {
-        Warn "No .NET ASP.NET Core runtimes found."
+        Warn "No .NET runtimes found at all."
         return $false
     }
 
-    # Parse installed runtimes
-    $installedRuntimes = $runtimes |
-        Where-Object { $_ -match "^Microsoft\.AspNetCore\.App\s+([0-9]+\.[0-9]+\.[0-9]+)" } |
-        ForEach-Object {
-            [PSCustomObject]@{
-                Full    = $_.Trim()
-                Version = $Matches[1]
-                Major   = $Matches[1].Split('.')[0]
+    try {
+        $installedRuntimes = $runtimes |
+            Where-Object { $_ -match "^Microsoft\.AspNetCore\.App\s+([0-9]+\.[0-9]+\.[0-9]+)" } |
+            ForEach-Object {
+                [PSCustomObject]@{
+                    Full    = $_.Trim()
+                    Version = $Matches[1]
+                    Major   = $Matches[1].Split('.')[0]
+                }
             }
-        }
+
+        # Force array behavior (important when only one match)
+        $installedRuntimes = @($installedRuntimes)
+    }
+    catch {
+        Warn "Failed to parse installed runtimes: $($_.Exception.Message)"
+        return $false
+    }
+
+    if (-not $installedRuntimes -or $installedRuntimes.Length -eq 0) {
+        Warn "No Microsoft.AspNetCore.App runtimes found."
+        return $false
+    }
 
     Ok "Installed .NET ASP.NET Core Runtimes:"
-    $installedRuntimes.Full | ForEach-Object { Write-Host "$_ (Installed)" }
+    foreach ($r in $installedRuntimes) {
+        Write-Host "$($r.Full) (Installed)"
+    }
 
     $allFound = $true
-
     foreach ($version in $RequiredVersions) {
         if ($installedRuntimes.Major -contains $version) {
             Ok "ASP.NET Core Runtime version $version is installed."
@@ -1741,7 +1755,7 @@ function Install-SelfSignedCertificate {
                     New-Item $sslPath -Value $certObject -SSLFlags 0 | Out-Null
                 }
             } else {
-                Warng "No SSL bindings currently exist. Creating one..."
+                Warn "No SSL bindings currently exist. Creating one..."
                 $sslPath = "IIS:\SslBindings\0.0.0.0!443"
                 New-Item $sslPath -Value $certObject -SSLFlags 0 | Out-Null
             }
@@ -1816,7 +1830,6 @@ function Register-CertRenewalScheduledTask {
 
     Ok "Scheduled task '$taskName' created/updated successfully." -ForegroundColor Green
 }
-
 # ------------------ Helper Functions ------------------
 function Get-PfxSubject {
     param (
@@ -2369,7 +2382,100 @@ function New-LocalSqlAdminsGroup {
     }
     return $GroupName
 }
+function Test-AndFixCertPermissions {
+    <#
+    .SYNOPSIS
+        Verifies and, if necessary, fixes private key ACLs for a given domain certificate.
 
+    .DESCRIPTION
+        Finds the most recent certificate matching the domain in the LocalMachine store,
+        determines the associated private key path, and grants the specified user
+        FullControl permissions.  Works for both modern CNG and legacy CSP keys.
+
+    .PARAMETER Domain
+        The CN or DNS name of the certificate.
+
+    .PARAMETER User
+        The account to grant FullControl to (e.g., 'PSP-MISSOURI\pspsvc').
+
+    .PARAMETER StoreLocation
+        The certificate store location. Default: Cert:\LocalMachine\My
+    #>
+
+    param(
+        [Parameter(Mandatory)] [string]$Domain,
+        [Parameter(Mandatory)] [string]$User,
+        [string]$StoreLocation = "Cert:\LocalMachine\My"
+    )
+
+    try {
+        # --- Locate most recent cert for this domain (issuer agnostic) ---
+        $cert = Get-ChildItem -Path $StoreLocation | Where-Object {
+            ($_.Subject -like "*CN=$Domain*" -or $_.DnsNameList -contains $Domain)
+        } | Sort-Object NotAfter -Descending | Select-Object -First 1
+
+        if (-not $cert) {
+            Warn "No certificate found for $Domain in $StoreLocation."
+            return $false
+        }
+
+        Info "Found certificate for $Domain (Thumbprint: $($cert.Thumbprint))"
+
+        if (-not $cert.HasPrivateKey) {
+            Warn "Certificate does not have a private key association."
+            return $false
+        }
+
+        # --- Determine key path ---
+        $keyPath = $null
+
+        try {
+            # Try legacy CryptoAPI provider first
+            $keyProvInfo = $cert.PrivateKey.CspKeyContainerInfo
+            if ($keyProvInfo) {
+                $keyPath = Join-Path "$env:ProgramData\Microsoft\Crypto\RSA\MachineKeys" `
+                                     $keyProvInfo.UniqueKeyContainerName
+            }
+        } catch {
+            # Ignore; CNG keys will be handled below
+        }
+
+        # Fallback for CNG keys (modern ACME-issued certs)
+        if (-not $keyPath) {
+            $thumb = $cert.Thumbprint
+            $keyName = (certutil -store my $thumb |
+                        Select-String 'Unique container name:' |
+                        ForEach-Object { $_ -replace '.*:\s*','' }).Trim()
+            if ($keyName) {
+                $keyPath = Join-Path "$env:ProgramData\Microsoft\Crypto\Keys" $keyName
+            }
+        }
+
+        if (-not $keyPath) {
+            Warn "Could not resolve private key path for $Domain. Skipping ACL update."
+            return $false
+        }
+
+        if (-not (Test-Path $keyPath)) {
+            Warn "Private key file not found at $keyPath"
+            return $false
+        }
+
+        # --- Apply ACL ---
+        Info "Applying FullControl permissions for $User on $keyPath"
+        $acl = Get-Acl $keyPath
+        $rule = New-Object System.Security.AccessControl.FileSystemAccessRule($User, "FullControl", "Allow")
+        $acl.SetAccessRule($rule)
+        Set-Acl -Path $keyPath -AclObject $acl
+        Ok "Granted FullControl on private key to $User"
+
+        return $true
+    }
+    catch {
+        Err "Error fixing private key permissions for $Domain : $($_.Exception.Message)"
+        return $false
+    }
+}
 # ------------------ Menu & UI ------------------
 function Show-CertificateTypeMenu {
     Clear-Host 2>$null
@@ -2457,7 +2563,6 @@ function Test-UserCredential {
         $false
     }
 }
-
 # ------------------ Wizard Core ------------------
 function Run-Wizard {
     $SelectedCertificateType = Show-CertificateTypeMenu
@@ -3115,8 +3220,16 @@ else {
             try{
                 Info "Opening Port 80 on Firewall for IIS, ensuring LetsEncrypt can reach server..."
                 Add-FirewallRuleForPort -Port 80
+                # Run Cert Puller Script to Install Scripts
+                Info "Running CertPuller Script to grab LetsEncrypt Certificate for $FrontendHost..."
                 Install-ACMECertificate -FrontendHost $FrontendHost -ContactEmail $CertConfig.Email
-                $certInstalled = $true
+
+                if (-not (Test-AndFixCertPermissions -Domain $FrontendHost -User $PSPServiceUser)) {
+                    Warn "Private key ACL update failed or not required. Continuing..."
+                } else {
+                    Ok "Private key ACL verified for $PSPServiceUser"
+                    $certInstalled = $true
+                }
 
                 # Register Scheduled Task to Renew Certificate.
                 Info "Registering Scheduled task to renew LetsEncrypt Certificate..."
@@ -3125,6 +3238,41 @@ else {
                 
             } catch {
                 Warn "LetsEncrypt install failed: $($_.Exception.Message)"
+                # --- DEBUG: Check the certificate type and private key provider ---
+                try {
+                    $cert = Get-ChildItem -Path Cert:\LocalMachine\My |
+                        Where-Object { $_.Subject -like "*$FrontendHost*" } |
+                        Sort-Object NotAfter -Descending |
+                        Select-Object -First 1
+
+                    if ($null -eq $cert) {
+                        Warn "DEBUG: No certificate found for $FrontendHost after Install-ACMECertificate."
+                    }
+                    else {
+                        Info "DEBUG: Retrieved cert subject: $($cert.Subject)"
+                        Info "DEBUG: Cert has private key: $($cert.HasPrivateKey)"
+                        
+                        # Test if CAPI (legacy) or CNG (modern) key
+                        try {
+                            $null = $cert.PrivateKey.CspKeyContainerInfo.ProviderName
+                            Ok "DEBUG: Certificate uses CAPI (CSP) provider: $($cert.PrivateKey.CspKeyContainerInfo.ProviderName)"
+                        }
+                        catch {
+                            if ($cert.PrivateKey -is [System.Security.Cryptography.RSACng]) {
+                                Warn "DEBUG: Certificate uses CNG (KSP) provider: Microsoft Software Key Storage Provider"
+                            }
+                            else {
+                                Warn "DEBUG: Unknown key provider type for certificate."
+                            }
+                        }
+                    }
+                }
+                catch {
+                    Warn "DEBUG: Error while inspecting certificate: $_"
+                }
+                exit 1
+                # --- END DEBUG BLOCK ---
+                
                 $certInstalled = $false
             }
         }
