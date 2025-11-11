@@ -182,7 +182,7 @@ try {
             Set-PAAccount -ID $account.ID -Contact $ContactEmail -Force
         }
 
-        $cert = New-PACertificate $Domain -Plugin WebRoot -PluginArgs @{ WRPath = $WebRoot } -KeyAlgorithm RSA -Force
+        $cert = New-PACertificate $Domain -Plugin WebRoot -PluginArgs @{ WRPath = $WebRoot }
         if (-not $cert) { throw "Failed to obtain/renew certificate for $Domain" }
         Ok "Successfully obtained/renewed certificate for $Domain"
 
