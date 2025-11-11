@@ -182,30 +182,53 @@ try {
             Set-PAAccount -ID $account.ID -Contact $ContactEmail -Force
         }
 
-        $cert = New-PACertificate $Domain -Plugin WebRoot -PluginArgs @{ WRPath = $WebRoot } -Force
+        $cert = New-PACertificate $Domain -Plugin WebRoot -PluginArgs @{ WRPath = $WebRoot } -KeyAlgorithm RSA -Force
         if (-not $cert) { throw "Failed to obtain/renew certificate for $Domain" }
         Ok "Successfully obtained/renewed certificate for $Domain"
 
         $certDetails = Get-PACertificate -MainDomain $Domain
         if (-not $certDetails) { throw "Failed to retrieve certificate details for $Domain" }
 
-        $imported = Import-PfxCertificate -FilePath $certDetails.PfxFullChain `
+        # ---------------------------------------------------------------------------
+        # Import certificate and rebind it to ensure PrivateKey is accessible
+        # ---------------------------------------------------------------------------
+        $importedCerts = Import-PfxCertificate -FilePath $certDetails.PfxFullChain `
             -Password $certDetails.PfxPass `
             -CertStoreLocation $StoreLocation `
             -Exportable
 
-        if ($imported) {
-            Ok "Certificate imported to $StoreLocation"
-
-            # --- RELOAD the certificate from the store so the PrivateKey is bound correctly ---
-            $newCert = Get-ChildItem -Path $StoreLocation |
-                Where-Object { $_.Thumbprint -eq $imported.Thumbprint } |
-                Select-Object -First 1
-            if (-not $newCert) {
-                throw "Failed to reload certificate from store after import."
-            }
-        } else {
+        if (-not $importedCerts) {
             throw "Failed to import certificate."
+        }
+
+        # Get the first thumbprint from whatever was returned
+        $newThumb = ($importedCerts | Select-Object -First 1).Thumbprint
+        Ok "Certificate imported to $StoreLocation (Thumbprint=$newThumb)"
+
+        # --- Force re-load from certificate store ---
+        $newCert = $null
+        Start-Sleep -Seconds 1  # give Windows a moment to commit to store
+
+        try {
+            $newCert = Get-Item "Cert:\LocalMachine\My\$newThumb"
+            if (-not $newCert) { throw "Certificate with Thumbprint=$newThumb not found in store." }
+
+            # verify the key is accessible
+            if (-not $newCert.HasPrivateKey) {
+                Warn "Reloaded certificate has no private key reference yet, retrying..."
+                Start-Sleep -Seconds 2
+                $newCert = Get-Item "Cert:\LocalMachine\My\$newThumb"
+            }
+
+            if ($newCert.HasPrivateKey) {
+                Ok "Reloaded certificate successfully with PrivateKey attached."
+            } else {
+                Warn "Reloaded certificate still missing PrivateKey; ACL updates may fail."
+            }
+        }
+        catch {
+            Err "Failed to reload certificate from store: $($_.Exception.Message)"
+            throw
         }
 
         # Clean old certs
