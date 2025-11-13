@@ -1138,7 +1138,7 @@ function Install-WebConfig {
 <configuration>
   <system.webServer>
     <!-- 403 Error Handling -->
-    <httpErrors errorMode="Custom" existingResponse="Replace">
+    <httpErrors errorMode="Custom" existingResponse="PassThrough">
       <remove statusCode="403" />
       <error statusCode="403"
              path="CustomErrors\forbidden.html"
@@ -3224,11 +3224,21 @@ else {
                 Info "Running CertPuller Script to grab LetsEncrypt Certificate for $FrontendHost..."
                 Install-ACMECertificate -FrontendHost $FrontendHost -ContactEmail $CertConfig.Email
 
-                if (-not (Test-AndFixCertPermissions -Domain $FrontendHost -User $PSPServiceUser)) {
-                    Warn "Private key ACL update failed or not required. Continuing..."
-                } else {
-                    Ok "Private key ACL verified for $PSPServiceUser"
-                    $certInstalled = $true
+                if ([string]::IsNullOrWhiteSpace($PSPServiceUser) -or
+                    $PSPServiceUser -eq "LocalSystem" -or
+                    $PSPServiceUser -eq "NT AUTHORITY\SYSTEM" -or
+                    $PSPServiceUser -eq "NT AUTHORITY\NetworkService" -or
+                    $PSPServiceUser -eq "NT AUTHORITY\LocalService") {
+                        Info "Skipping private key ACL update: service user is blank or system account."
+                        $certInstalled = $true
+                    }
+                else {
+                    if (-not (Test-AndFixCertPermissions -Domain $FrontendHost -User $PSPServiceUser)) {
+                        Warn "Private key ACL update failed or not required. Continuing..."
+                    } else {
+                        Ok "Private key ACL verified for $PSPServiceUser"
+                        $certInstalled = $true
+                    }
                 }
 
                 # Register Scheduled Task to Renew Certificate.
