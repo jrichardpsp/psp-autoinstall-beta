@@ -1138,7 +1138,7 @@ function Install-WebConfig {
 <configuration>
   <system.webServer>
     <!-- 403 Error Handling -->
-    <httpErrors errorMode="Custom" existingResponse="PassThrough">
+    <httpErrors errorMode="Custom" existingResponse="Auto" defaultResponseMode="File">
       <remove statusCode="403" />
       <error statusCode="403"
              path="CustomErrors\forbidden.html"
