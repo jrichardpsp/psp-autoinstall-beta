@@ -4,7 +4,7 @@
     This script will download various content from Microsoft, PowerSyncPro, and the PowerSyncPro Github.
  
 .NOTES
-    Date            November/2025
+    Date            December/2025
     Disclaimer:     This script is provided 'AS IS'. No warrantee is provided either expressed or implied. Declaration Software Ltd cannot be held responsible for any misuse of the script.
     Version: 0.1
     Updated: Initial Public Release.
