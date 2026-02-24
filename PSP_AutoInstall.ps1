@@ -3421,9 +3421,9 @@ try{
         }
     }
 
-    # Setup Service Dependencies in Completion Only Mode
-    # If Script is in Completion Only ($CompletionOnly) or Normal mode and if we are not using an external server (-not $ExternalServerInUse)
-    if (-not $PreReqOnly -and -not $ExternalServerInUse) {
+    # Setup Service Dependencies in Full Mode Only
+    # If Script is in Normal mode and if we are not using an external server (-not $ExternalServerInUse)
+    if (-not $PreReqOnly -and -not $CompletionOnly -and -not $ExternalServerInUse) {
         # Determine SQL Server service name for dependency
         $SQLInstanceTemp = $SqlInstance
 
