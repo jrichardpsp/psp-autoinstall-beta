@@ -1399,7 +1399,8 @@ function Install-HostsFile {
 function Install-ACMECertificate{
   param(
     [string]$FrontendHost,
-    [string]$ContactEmail
+    [string]$ContactEmail,
+    [int]$KestrelHttpsPort = 5001
   )
   
   # -----------------------------------
@@ -1427,7 +1428,7 @@ function Install-ACMECertificate{
   
   # Run Cert-Puller_PoshACME.ps1 with provided options above.
   Info "Beginning certificate request for $FrontendHost with contact e-mail $ContactEmail"
-  & C:\Scripts\Cert-Puller_PoshACME.ps1 -Domain $FrontendHost -ContactEmail $ContactEmail
+  & C:\Scripts\Cert-Puller_PoshACME.ps1 -Domain $FrontendHost -ContactEmail $ContactEmail -KestrelHttpsPort $KestrelHttpsPort
 }
 function Install-CustomPfxCertificate {
     <#
@@ -3587,7 +3588,7 @@ try{
                     Add-FirewallRuleForPort -Port 80
                     # Run Cert Puller Script to Install Scripts
                     Info "Running CertPuller Script to grab LetsEncrypt Certificate for $FrontendHost..."
-                    Install-ACMECertificate -FrontendHost $FrontendHost -ContactEmail $CertConfig.Email
+                    Install-ACMECertificate -FrontendHost $FrontendHost -ContactEmail $CertConfig.Email -KestrelHttpsPort $KestrelHttpsPort
 
                     if ([string]::IsNullOrWhiteSpace($PSPServiceUser) -or
                         $PSPServiceUser -eq "LocalSystem" -or
