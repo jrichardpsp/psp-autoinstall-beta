@@ -13,8 +13,9 @@
 .NOTES
     Date            October/2025
     Disclaimer:     This script is provided 'AS IS'. No warrantee is provided either expressed or implied. Declaration Software Ltd cannot be held responsible for any misuse of the script.
-    Version: 0.1
-    Updated: Initial Release.
+    Version: 0.2
+    Updated : Initial Release.
+    Updated : 10th March, 2026 - Added support to set a different Kestrel Port
     Copyright (c) 2025 Declaration Software
 
 .PARAMETER PfxPath

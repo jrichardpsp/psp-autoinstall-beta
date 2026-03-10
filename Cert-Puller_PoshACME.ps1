@@ -14,8 +14,9 @@
 
 .NOTES
 Date:           November/2025
-Version:        0.3
+Version:        0.4
 Update:         Added -ForcePostInstall flag and hybrid key logic.
+Updated : 10th March, 2026 - Added support to set a different Kestrel Port
 Disclaimer:     This script is provided 'AS IS' with no warranty.
 Copyright (c)   2025 Declaration Software
 
@@ -57,7 +58,7 @@ param (
     [switch]$Help,
 
     [Parameter(Mandatory=$false)]
-    [int]$KestrelHttpsPort = 0
+    [int]$KestrelHttpsPort = 5001
 )
 # ------------------ Logging Functions ------------------
 function Info  { param($Message) Write-Host "[*] $Message" -ForegroundColor Cyan }
