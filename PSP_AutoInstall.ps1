@@ -11,6 +11,7 @@
     Updated : 20th January, 2026 - Added logic to split the script in half and allow for PreReqOnly and Completion only modes.
     Updated : 3rd February, 2026 - Added logic to handle a headless flag.  Internal use only. - JRR
     Updated : 23rd February, 2026 - Fixed issues in completion only mode with SQL selection. - JRR
+    Updated : 10th March, 2026 - Added -KestrelHttpPort / -KestrelHttpsPort flags for custom Kestrel ports. - JRR
     Copyright (c) 2026 Declaration Software
 #>
 
@@ -37,7 +38,13 @@ param (
     # Run headless - reduces manual input from user for automation. Only to be used with the $PreReqOnly flags.
     # --> Removes user input commitment, assumes using the default SQL instance if available
     # Internal Use Only
-    [switch]$Headless = $false
+    [switch]$Headless = $false,
+
+    # Override the default Kestrel HTTP backend port (default 5000).
+    [int]$KestrelHttpPort = 5000,
+
+    # Override the default Kestrel HTTPS backend port (default 5001).
+    [int]$KestrelHttpsPort = 5001
 )
 
 Set-StrictMode -Version Latest
@@ -3131,9 +3138,8 @@ try{
         $SqlPort     = "1433"
         $SqlDatabase = "PowerSyncProDB"
 
-        # Default Kestrel backend ports (may be changed below if conflicts detected)
-        $KestrelHttpPort  = 5000
-        $KestrelHttpsPort = 5001
+        # Kestrel backend ports — set via script params (defaults: HTTP 5000 / HTTPS 5001)
+        # May be changed below if conflicts are detected or user customises.
 
         $InstallSqlExpress = $false
 
@@ -3252,11 +3258,7 @@ try{
                 Write-Host "You must choose alternative ports for the PowerSyncPro backend." -ForegroundColor Yellow
                 $needCustomPorts = $true
             } else {
-                Write-Host ""
-                Write-Host ("Default Kestrel ports are available: HTTP {0} / HTTPS {1}" -f $KestrelHttpPort, $KestrelHttpsPort) -ForegroundColor Green
-                $portChoice = Read-Host "Press Enter to accept defaults, or type 'C' to use custom ports"
-                if ($portChoice -match '^[Cc]$') { $needCustomPorts = $true }
-                else { Ok ("Using default Kestrel ports: HTTP {0} / HTTPS {1}" -f $KestrelHttpPort, $KestrelHttpsPort) }
+                Ok ("Kestrel ports available and confirmed: HTTP {0} / HTTPS {1}" -f $KestrelHttpPort, $KestrelHttpsPort)
             }
 
             if ($needCustomPorts) {
